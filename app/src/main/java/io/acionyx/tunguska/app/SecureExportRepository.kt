@@ -1,0 +1,339 @@
+package io.acionyx.tunguska.app
+
+import android.content.Context
+import io.acionyx.tunguska.crypto.CipherBox
+import io.acionyx.tunguska.domain.CanonicalJson
+import io.acionyx.tunguska.domain.DnsMode
+import io.acionyx.tunguska.domain.ProfileIr
+import io.acionyx.tunguska.domain.RouteAction
+import io.acionyx.tunguska.domain.SplitTunnelMode
+import io.acionyx.tunguska.engine.api.CompiledEngineConfig
+import io.acionyx.tunguska.netpolicy.RoutePreviewOutcome
+import io.acionyx.tunguska.storage.EncryptedArtifactStore
+import io.acionyx.tunguska.storage.LoadedArtifact
+import io.acionyx.tunguska.storage.StoredArtifact
+import io.acionyx.tunguska.vpnservice.VpnRuntimeSnapshot
+import java.nio.file.Path
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+
+private const val EXPORT_MASTER_KEY_ALIAS: String = "io.acionyx.tunguska.export.master"
+private const val EXPORT_ROOT_RELATIVE_PATH: String = "exports"
+
+class SecureExportRepository(
+    private val rootDir: Path,
+    private val cipherBox: CipherBox,
+    private val clock: () -> Long = System::currentTimeMillis,
+) {
+    constructor(
+        context: Context,
+        cipherBox: CipherBox = AndroidKeyStoreCipherBox(EXPORT_MASTER_KEY_ALIAS),
+        clock: () -> Long = System::currentTimeMillis,
+    ) : this(
+        rootDir = context.filesDir.toPath().resolve(EXPORT_ROOT_RELATIVE_PATH),
+        cipherBox = cipherBox,
+        clock = clock,
+    )
+
+    val exportRootPath: String = rootDir.toAbsolutePath().normalize().toString()
+    val keyReference: String = "android-keystore:$EXPORT_MASTER_KEY_ALIAS"
+
+    fun exportEncryptedProfileBackup(
+        profile: ProfileIr,
+        compiledConfig: CompiledEngineConfig,
+    ): ExportArtifactRecord {
+        val createdAtEpochMs = clock()
+        val payload = ProfileBackupPayload(
+            createdAtEpochMs = createdAtEpochMs,
+            profileHash = profile.canonicalHash(),
+            compiledConfigHash = compiledConfig.configHash,
+            engineId = compiledConfig.engineId,
+            configFormat = compiledConfig.format,
+            profile = profile,
+        )
+        return writeArtifact(
+            artifactType = PROFILE_BACKUP_ARTIFACT_TYPE,
+            payloadJson = CanonicalJson.instance.encodeToString(payload),
+            redacted = false,
+            summary = "Wrote an encrypted full-profile backup envelope to app-private exports.",
+            createdAtEpochMs = createdAtEpochMs,
+        )
+    }
+
+    fun exportRedactedDiagnosticBundle(
+        profile: ProfileIr,
+        compiledConfig: CompiledEngineConfig,
+        tunnelPlanSummary: TunnelPlanSummary,
+        runtimeSnapshot: VpnRuntimeSnapshot,
+        profileStorage: ProfileStorageState,
+        routePreview: PreviewInputs,
+        previewOutcome: RoutePreviewOutcome,
+    ): ExportArtifactRecord {
+        val createdAtEpochMs = clock()
+        val payload = DiagnosticBundlePayload(
+            createdAtEpochMs = createdAtEpochMs,
+            profileHash = profile.canonicalHash(),
+            compiledConfigHash = compiledConfig.configHash,
+            engineId = compiledConfig.engineId,
+            configFormat = compiledConfig.format,
+            profile = profile.toRedactedReport(),
+            runtime = runtimeSnapshot.toRedactedReport(),
+            storage = profileStorage.toRedactedReport(),
+            tunnelPlan = tunnelPlanSummary,
+            routePreview = RedactedRoutePreviewReport(
+                packageHash = routePreview.packageName.takeIf { it.isNotBlank() }?.redactedDigest(),
+                destinationHostHash = routePreview.destinationHost.takeIf { it.isNotBlank() }?.redactedDigest(),
+                destinationPort = routePreview.destinationPort.toIntOrNull(),
+                action = previewOutcome.action.name,
+                matchedRuleHash = previewOutcome.matchedRuleId?.redactedDigest(),
+            ),
+        )
+        return writeArtifact(
+            artifactType = DIAGNOSTIC_BUNDLE_ARTIFACT_TYPE,
+            payloadJson = CanonicalJson.instance.encodeToString(payload),
+            redacted = true,
+            summary = "Wrote a redacted audit bundle with runtime status and deterministic hashes.",
+            createdAtEpochMs = createdAtEpochMs,
+        )
+    }
+
+    fun loadArtifact(path: Path): LoadedArtifact {
+        return checkNotNull(buildStore(path).load()) {
+            "No encrypted artifact is stored at ${path.toAbsolutePath().normalize()}."
+        }
+    }
+
+    private fun writeArtifact(
+        artifactType: String,
+        payloadJson: String,
+        redacted: Boolean,
+        summary: String,
+        createdAtEpochMs: Long,
+    ): ExportArtifactRecord {
+        val path = rootDir.resolve(buildFileName(artifactType, createdAtEpochMs, payloadJson))
+        val stored = buildStore(path).save(
+            artifactType = artifactType,
+            payloadJson = payloadJson,
+            redacted = redacted,
+        )
+        return stored.toRecord(summary)
+    }
+
+    private fun buildStore(path: Path): EncryptedArtifactStore = EncryptedArtifactStore(
+        path = path,
+        cipherBox = cipherBox,
+        clock = clock,
+    )
+
+    private fun buildFileName(
+        artifactType: String,
+        createdAtEpochMs: Long,
+        payloadJson: String,
+    ): String = "$artifactType-$createdAtEpochMs-${CanonicalJson.sha256Hex(payloadJson).take(12)}.json.enc"
+
+    private fun StoredArtifact.toRecord(summary: String): ExportArtifactRecord = ExportArtifactRecord(
+        artifactType = artifactType,
+        redacted = redacted,
+        payloadHash = payloadHash,
+        createdAtEpochMs = createdAtEpochMs,
+        path = path.toString(),
+        keyReference = keyReference,
+        summary = summary,
+    )
+
+    companion object {
+        private const val PROFILE_BACKUP_ARTIFACT_TYPE: String = "profile_backup"
+        private const val DIAGNOSTIC_BUNDLE_ARTIFACT_TYPE: String = "diagnostic_bundle"
+    }
+}
+
+data class ExportArtifactRecord(
+    val artifactType: String,
+    val redacted: Boolean,
+    val payloadHash: String,
+    val createdAtEpochMs: Long,
+    val path: String,
+    val keyReference: String?,
+    val summary: String,
+)
+
+@Serializable
+data class TunnelPlanSummary(
+    val processNameSuffix: String,
+    val preserveLoopback: Boolean,
+    val splitTunnelMode: String,
+    val allowedPackageCount: Int,
+    val disallowedPackageCount: Int,
+    val runtimeMode: String,
+)
+
+@Serializable
+private data class ProfileBackupPayload(
+    val createdAtEpochMs: Long,
+    val profileHash: String,
+    val compiledConfigHash: String,
+    val engineId: String,
+    val configFormat: String,
+    val profile: ProfileIr,
+)
+
+@Serializable
+private data class DiagnosticBundlePayload(
+    val createdAtEpochMs: Long,
+    val profileHash: String,
+    val compiledConfigHash: String,
+    val engineId: String,
+    val configFormat: String,
+    val profile: RedactedProfileReport,
+    val runtime: RedactedRuntimeReport,
+    val storage: RedactedStorageReport,
+    val tunnelPlan: TunnelPlanSummary,
+    val routePreview: RedactedRoutePreviewReport,
+)
+
+@Serializable
+private data class RedactedProfileReport(
+    val profileIdHash: String,
+    val profileName: String,
+    val outboundAddressHash: String,
+    val outboundPort: Int,
+    val serverNameHash: String,
+    val uuidHash: String,
+    val realityPublicKeyHash: String,
+    val realityShortIdHash: String,
+    val flow: String?,
+    val utlsFingerprint: String,
+    val splitTunnelMode: String,
+    val allowPackageCount: Int,
+    val denyPackageCount: Int,
+    val routingDefaultAction: String,
+    val proxyRuleCount: Int,
+    val directRuleCount: Int,
+    val blockRuleCount: Int,
+    val dnsMode: String,
+    val dnsEndpointHashes: List<String>,
+    val safeMode: Boolean,
+    val compatibilityLocalProxy: Boolean,
+    val debugEndpointsEnabled: Boolean,
+)
+
+@Serializable
+private data class RedactedRuntimeReport(
+    val phase: String,
+    val configHash: String?,
+    val sessionLabelHash: String?,
+    val engineId: String?,
+    val engineFormat: String?,
+    val compiledPayloadBytes: Int,
+    val allowCount: Int,
+    val denyCount: Int,
+    val routeCount: Int,
+    val excludedRouteCount: Int,
+    val mtu: Int?,
+    val runtimeMode: String,
+    val auditStatus: String,
+    val auditFindingCount: Int,
+    val bootstrapStatus: String,
+    val engineHostStatus: String,
+    val engineSessionStatus: String,
+    val engineSessionHealthStatus: String,
+    val sessionWorkspacePresent: Boolean,
+    val lastError: String?,
+)
+
+@Serializable
+private data class RedactedStorageReport(
+    val backend: String,
+    val keyReference: String,
+    val storagePathHash: String,
+    val persistedProfileHash: String?,
+    val lastPersistedAt: String?,
+    val status: String,
+    val error: String?,
+)
+
+@Serializable
+private data class RedactedRoutePreviewReport(
+    val packageHash: String?,
+    val destinationHostHash: String?,
+    val destinationPort: Int?,
+    val action: String,
+    val matchedRuleHash: String?,
+)
+
+private fun ProfileIr.toRedactedReport(): RedactedProfileReport {
+    val splitTunnel = vpn.splitTunnel
+    val allowCount = when (splitTunnel) {
+        SplitTunnelMode.FullTunnel -> 0
+        is SplitTunnelMode.Allowlist -> splitTunnel.packageNames.size
+        is SplitTunnelMode.Denylist -> 0
+    }
+    val denyCount = when (splitTunnel) {
+        SplitTunnelMode.FullTunnel -> 0
+        is SplitTunnelMode.Allowlist -> 0
+        is SplitTunnelMode.Denylist -> splitTunnel.packageNames.size
+    }
+    return RedactedProfileReport(
+        profileIdHash = id.redactedDigest(),
+        profileName = name,
+        outboundAddressHash = outbound.address.redactedDigest(),
+        outboundPort = outbound.port,
+        serverNameHash = outbound.serverName.redactedDigest(),
+        uuidHash = outbound.uuid.redactedDigest(),
+        realityPublicKeyHash = outbound.realityPublicKey.redactedDigest(),
+        realityShortIdHash = outbound.realityShortId.redactedDigest(),
+        flow = outbound.flow,
+        utlsFingerprint = outbound.utlsFingerprint,
+        splitTunnelMode = splitTunnel::class.simpleName.orEmpty(),
+        allowPackageCount = allowCount,
+        denyPackageCount = denyCount,
+        routingDefaultAction = routing.defaultAction.name,
+        proxyRuleCount = routing.rules.count { it.action == RouteAction.PROXY },
+        directRuleCount = routing.rules.count { it.action == RouteAction.DIRECT },
+        blockRuleCount = routing.rules.count { it.action == RouteAction.BLOCK },
+        dnsMode = dns::class.simpleName.orEmpty(),
+        dnsEndpointHashes = when (val mode = dns) {
+            is DnsMode.VpnDns -> mode.servers.map(String::redactedDigest)
+            DnsMode.SystemDns -> emptyList()
+            is DnsMode.CustomEncrypted -> mode.endpoints.map(String::redactedDigest)
+        },
+        safeMode = safety.safeMode,
+        compatibilityLocalProxy = safety.compatibilityLocalProxy,
+        debugEndpointsEnabled = safety.debugEndpointsEnabled,
+    )
+}
+
+private fun VpnRuntimeSnapshot.toRedactedReport(): RedactedRuntimeReport = RedactedRuntimeReport(
+    phase = phase.name,
+    configHash = configHash,
+    sessionLabelHash = sessionLabel?.redactedDigest(),
+    engineId = engineId,
+    engineFormat = engineFormat,
+    compiledPayloadBytes = compiledPayloadBytes,
+    allowCount = allowCount,
+    denyCount = denyCount,
+    routeCount = routeCount,
+    excludedRouteCount = excludedRouteCount,
+    mtu = mtu,
+    runtimeMode = runtimeMode.name,
+    auditStatus = auditStatus.name,
+    auditFindingCount = auditFindingCount,
+    bootstrapStatus = bootstrapStatus.name,
+    engineHostStatus = engineHostStatus.name,
+    engineSessionStatus = engineSessionStatus.name,
+    engineSessionHealthStatus = engineSessionHealthStatus.name,
+    sessionWorkspacePresent = !sessionWorkspacePath.isNullOrBlank(),
+    lastError = lastError,
+)
+
+private fun ProfileStorageState.toRedactedReport(): RedactedStorageReport = RedactedStorageReport(
+    backend = backend,
+    keyReference = keyReference,
+    storagePathHash = storagePath.redactedDigest(),
+    persistedProfileHash = persistedProfileHash,
+    lastPersistedAt = lastPersistedAt,
+    status = status,
+    error = error,
+)
+
+private fun String.redactedDigest(): String = "sha256:${CanonicalJson.sha256Hex(this).take(16)}:$length"

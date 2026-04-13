@@ -1,0 +1,12 @@
+.gradle/
+.kotlin/
+**/build/
+.idea/
+local.properties
+.tmp/
+dist/
+logs/
+deep-research-report (3).md
+data/raw/**
+data/derived/**/*.csv
+data/derived/**/*.md

@@ -1,0 +1,37 @@
+name: Security Provenance
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  attest-debug-apk:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      attestations: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+      - name: Install Android SDK Packages
+        run: |
+          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          yes | "${SDKMANAGER}" --licenses
+          "${SDKMANAGER}" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+      - name: Build Debug APK
+        run: ./gradlew :app:assembleDebug --no-configuration-cache
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: app-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+      - name: Attest Build Provenance
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+        with:
+          subject-path: app/build/outputs/apk/debug/app-debug.apk

@@ -1,0 +1,19 @@
+upstreams:
+  - owner: KaringX
+    repo: karing
+  - owner: SaeedDev94
+    repo: Xray
+  - owner: 2dust
+    repo: v2rayNG
+  - owner: hiddify
+    repo: hiddify-app
+  - owner: dyhkwong
+    repo: Exclave
+  - owner: MatsuriDayo
+    repo: NekoBoxForAndroid
+  - owner: chen08209
+    repo: FlClash
+  - owner: lhear
+    repo: SimpleXray
+  - owner: amnezia-vpn
+    repo: amnezia-client

@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+      - name: Install Android SDK Packages
+        run: |
+          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          yes | "${SDKMANAGER}" --licenses
+          "${SDKMANAGER}" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+      - name: Ensure Gradle Wrapper Is Executable
+        run: chmod +x gradlew
+      - name: Build Release APK Assets
+        run: ./gradlew test :vpnservice:testDebugUnitTest :app:assembleDebug :app:assembleInternal --no-configuration-cache
+      - name: Prepare Release Assets
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          mkdir -p release-assets
+          cp app/build/outputs/apk/internal/app-internal.apk "release-assets/tunguska-${TAG}-internal.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "release-assets/tunguska-${TAG}-debug.apk"
+          sha256sum "release-assets/tunguska-${TAG}-internal.apk" > "release-assets/tunguska-${TAG}-internal.apk.sha256"
+          sha256sum "release-assets/tunguska-${TAG}-debug.apk" > "release-assets/tunguska-${TAG}-debug.apk.sha256"
+          cat > release-assets/release-notes.md <<EOF
+          Installable APK assets for ${TAG}.
+
+          - \`tunguska-${TAG}-internal.apk\`: non-debuggable internal build for sideload testing.
+          - \`tunguska-${TAG}-debug.apk\`: debuggable build for troubleshooting only.
+          - Each APK ships with a matching \`.sha256\` checksum file.
+          EOF
+      - name: Create Or Update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if ! gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release create "${TAG}" \
+              --title "Tunguska ${TAG}" \
+              --notes-file release-assets/release-notes.md
+          fi
+          gh release upload "${TAG}" \
+            "release-assets/tunguska-${TAG}-internal.apk" \
+            "release-assets/tunguska-${TAG}-internal.apk.sha256" \
+            "release-assets/tunguska-${TAG}-debug.apk" \
+            "release-assets/tunguska-${TAG}-debug.apk.sha256" \
+            --clobber

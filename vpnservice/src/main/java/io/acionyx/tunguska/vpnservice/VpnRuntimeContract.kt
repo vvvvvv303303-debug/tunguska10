@@ -1,0 +1,256 @@
+package io.acionyx.tunguska.vpnservice
+
+import android.os.Bundle
+import android.os.Message
+import android.os.Messenger
+import io.acionyx.tunguska.domain.SplitTunnelMode
+import io.acionyx.tunguska.engine.api.CompiledEngineConfig
+
+object VpnRuntimeContract {
+    const val MSG_GET_STATUS: Int = 1
+    const val MSG_STAGE_PLAN: Int = 2
+    const val MSG_START_RUNTIME: Int = 3
+    const val MSG_STOP_RUNTIME: Int = 4
+    const val MSG_STATUS: Int = 100
+    const val MSG_ERROR: Int = 101
+
+    private const val KEY_CONFIG_HASH = "config_hash"
+    private const val KEY_ALLOWED_PACKAGES = "allowed_packages"
+    private const val KEY_DISALLOWED_PACKAGES = "disallowed_packages"
+    private const val KEY_SPLIT_TUNNEL_MODE = "split_tunnel_mode"
+    private const val KEY_PROCESS_NAME_SUFFIX = "process_name_suffix"
+    private const val KEY_PRESERVE_LOOPBACK = "preserve_loopback"
+    private const val KEY_RUNTIME_MODE = "runtime_mode"
+    private const val KEY_SAFE_MODE = "safe_mode"
+    private const val KEY_ENGINE_ID = "engine_id"
+    private const val KEY_ENGINE_FORMAT = "engine_format"
+    private const val KEY_ENGINE_PAYLOAD = "engine_payload"
+    private const val KEY_PROFILE_CANONICAL_JSON = "profile_canonical_json"
+
+    private const val KEY_PHASE = "phase"
+    private const val KEY_SESSION_LABEL = "session_label"
+    private const val KEY_COMPILED_PAYLOAD_BYTES = "compiled_payload_bytes"
+    private const val KEY_ENGINE_HOST_STATUS = "engine_host_status"
+    private const val KEY_LAST_ENGINE_HOST_AT = "last_engine_host_at"
+    private const val KEY_LAST_ENGINE_HOST_SUMMARY = "last_engine_host_summary"
+    private const val KEY_ENGINE_SESSION_STATUS = "engine_session_status"
+    private const val KEY_LAST_ENGINE_SESSION_AT = "last_engine_session_at"
+    private const val KEY_LAST_ENGINE_SESSION_SUMMARY = "last_engine_session_summary"
+    private const val KEY_ENGINE_SESSION_HEALTH_STATUS = "engine_session_health_status"
+    private const val KEY_LAST_ENGINE_HEALTH_AT = "last_engine_health_at"
+    private const val KEY_LAST_ENGINE_HEALTH_SUMMARY = "last_engine_health_summary"
+    private const val KEY_ALLOW_COUNT = "allow_count"
+    private const val KEY_DENY_COUNT = "deny_count"
+    private const val KEY_ROUTE_COUNT = "route_count"
+    private const val KEY_EXCLUDED_ROUTE_COUNT = "excluded_route_count"
+    private const val KEY_MTU = "mtu"
+    private const val KEY_AUDIT_STATUS = "audit_status"
+    private const val KEY_AUDIT_FINDING_COUNT = "audit_finding_count"
+    private const val KEY_LAST_AUDIT_AT = "last_audit_at"
+    private const val KEY_LAST_AUDIT_SUMMARY = "last_audit_summary"
+    private const val KEY_BOOTSTRAP_STATUS = "bootstrap_status"
+    private const val KEY_LAST_BOOTSTRAP_AT = "last_bootstrap_at"
+    private const val KEY_LAST_BOOTSTRAP_SUMMARY = "last_bootstrap_summary"
+    private const val KEY_SESSION_WORKSPACE_PATH = "session_workspace_path"
+    private const val KEY_LAST_ERROR = "last_error"
+    private const val KEY_ERROR_MESSAGE = "error_message"
+
+    fun statusMessage(snapshot: VpnRuntimeSnapshot): Message = Message.obtain(null, MSG_STATUS).apply {
+        data = encodeSnapshot(snapshot)
+    }
+
+    fun errorMessage(message: String, snapshot: VpnRuntimeSnapshot): Message = Message.obtain(null, MSG_ERROR).apply {
+        data = encodeSnapshot(snapshot).apply {
+            putString(KEY_ERROR_MESSAGE, message)
+        }
+    }
+
+    fun stageRuntimeMessage(request: StagedRuntimeRequest, replyTo: Messenger): Message = Message.obtain(null, MSG_STAGE_PLAN).apply {
+        data = encodeRequest(request)
+        this.replyTo = replyTo
+    }
+
+    fun simpleMessage(what: Int, replyTo: Messenger): Message = Message.obtain(null, what).apply {
+        this.replyTo = replyTo
+    }
+
+    fun encodeRequest(request: StagedRuntimeRequest): Bundle {
+        val payloadBytes = request.compiledConfig.payload.toByteArray(Charsets.UTF_8).size
+        require(payloadBytes <= MAX_COMPILED_PAYLOAD_BYTES) {
+            "Compiled engine payload exceeds the $MAX_COMPILED_PAYLOAD_BYTES byte Binder staging limit."
+        }
+        require(request.plan.configHash == request.compiledConfig.configHash) {
+            "Tunnel session plan hash does not match the compiled engine config hash."
+        }
+        return Bundle().apply {
+            putString(KEY_ENGINE_ID, request.compiledConfig.engineId)
+            putString(KEY_ENGINE_FORMAT, request.compiledConfig.format)
+            putString(KEY_ENGINE_PAYLOAD, request.compiledConfig.payload)
+            request.profileCanonicalJson?.let { profileCanonicalJson ->
+                val profileBytes = profileCanonicalJson.toByteArray(Charsets.UTF_8).size
+                require(profileBytes <= MAX_PROFILE_JSON_BYTES) {
+                    "Canonical profile payload exceeds the $MAX_PROFILE_JSON_BYTES byte Binder staging limit."
+                }
+                putString(KEY_PROFILE_CANONICAL_JSON, profileCanonicalJson)
+            }
+            putBoolean(KEY_SAFE_MODE, request.compiledConfig.vpnDirectives.safeMode)
+            putAll(encodePlan(request.plan))
+        }
+    }
+
+    fun encodePlan(plan: TunnelSessionPlan): Bundle = Bundle().apply {
+        putString(KEY_CONFIG_HASH, plan.configHash)
+        putString(KEY_PROCESS_NAME_SUFFIX, plan.processNameSuffix)
+        putBoolean(KEY_PRESERVE_LOOPBACK, plan.preserveLoopback)
+        putStringArray(KEY_ALLOWED_PACKAGES, plan.allowedPackages.toTypedArray())
+        putStringArray(KEY_DISALLOWED_PACKAGES, plan.disallowedPackages.toTypedArray())
+        putString(KEY_RUNTIME_MODE, plan.runtimeMode.name)
+        putString(KEY_SPLIT_TUNNEL_MODE, encodeSplitTunnelMode(plan.splitTunnelMode))
+    }
+
+    fun decodeRequest(bundle: Bundle): StagedRuntimeRequest {
+        val plan = decodePlan(bundle)
+        val compiledConfig = CompiledEngineConfig(
+            engineId = bundle.getString(KEY_ENGINE_ID).orEmpty(),
+            format = bundle.getString(KEY_ENGINE_FORMAT).orEmpty(),
+            payload = bundle.getString(KEY_ENGINE_PAYLOAD).orEmpty(),
+            configHash = bundle.getString(KEY_CONFIG_HASH).orEmpty(),
+            vpnDirectives = io.acionyx.tunguska.engine.api.VpnDirectives(
+                preserveLoopback = plan.preserveLoopback,
+                splitTunnelMode = plan.splitTunnelMode,
+                safeMode = bundle.getBoolean(KEY_SAFE_MODE, true),
+            ),
+        )
+        require(compiledConfig.engineId.isNotBlank()) {
+            "Staged runtime request is missing the engine id."
+        }
+        require(compiledConfig.format.isNotBlank()) {
+            "Staged runtime request is missing the engine format."
+        }
+        return StagedRuntimeRequest(
+            plan = plan,
+            compiledConfig = compiledConfig,
+            profileCanonicalJson = bundle.getString(KEY_PROFILE_CANONICAL_JSON),
+        )
+    }
+
+    fun decodePlan(bundle: Bundle): TunnelSessionPlan {
+        val allowedPackages = bundle.getStringArray(KEY_ALLOWED_PACKAGES)?.toList().orEmpty()
+        val disallowedPackages = bundle.getStringArray(KEY_DISALLOWED_PACKAGES)?.toList().orEmpty()
+        val splitTunnelMode = decodeSplitTunnelMode(
+            value = bundle.getString(KEY_SPLIT_TUNNEL_MODE),
+            allowedPackages = allowedPackages,
+            disallowedPackages = disallowedPackages,
+        )
+        return TunnelSessionPlan(
+            processNameSuffix = bundle.getString(KEY_PROCESS_NAME_SUFFIX).orEmpty().ifBlank { ":vpn" },
+            preserveLoopback = bundle.getBoolean(KEY_PRESERVE_LOOPBACK, true),
+            allowedPackages = allowedPackages,
+            disallowedPackages = disallowedPackages,
+            splitTunnelMode = splitTunnelMode,
+            runtimeMode = bundle.getString(KEY_RUNTIME_MODE)
+                ?.let(TunnelSessionPlan.RuntimeMode::valueOf)
+                ?: TunnelSessionPlan.RuntimeMode.FAIL_CLOSED_UNTIL_ENGINE_HOST,
+            configHash = bundle.getString(KEY_CONFIG_HASH).orEmpty(),
+        )
+    }
+
+    fun encodeSnapshot(snapshot: VpnRuntimeSnapshot): Bundle = Bundle().apply {
+        putString(KEY_PHASE, snapshot.phase.name)
+        putString(KEY_CONFIG_HASH, snapshot.configHash)
+        putString(KEY_SESSION_LABEL, snapshot.sessionLabel)
+        putString(KEY_ENGINE_ID, snapshot.engineId)
+        putString(KEY_ENGINE_FORMAT, snapshot.engineFormat)
+        putInt(KEY_COMPILED_PAYLOAD_BYTES, snapshot.compiledPayloadBytes)
+        putInt(KEY_ALLOW_COUNT, snapshot.allowCount)
+        putInt(KEY_DENY_COUNT, snapshot.denyCount)
+        putInt(KEY_ROUTE_COUNT, snapshot.routeCount)
+        putInt(KEY_EXCLUDED_ROUTE_COUNT, snapshot.excludedRouteCount)
+        putInt(KEY_MTU, snapshot.mtu ?: -1)
+        putString(KEY_RUNTIME_MODE, snapshot.runtimeMode.name)
+        putString(KEY_AUDIT_STATUS, snapshot.auditStatus.name)
+        putInt(KEY_AUDIT_FINDING_COUNT, snapshot.auditFindingCount)
+        putLong(KEY_LAST_AUDIT_AT, snapshot.lastAuditAtEpochMs ?: -1L)
+        putString(KEY_LAST_AUDIT_SUMMARY, snapshot.lastAuditSummary)
+        putString(KEY_BOOTSTRAP_STATUS, snapshot.bootstrapStatus.name)
+        putLong(KEY_LAST_BOOTSTRAP_AT, snapshot.lastBootstrapAtEpochMs ?: -1L)
+        putString(KEY_LAST_BOOTSTRAP_SUMMARY, snapshot.lastBootstrapSummary)
+        putString(KEY_ENGINE_HOST_STATUS, snapshot.engineHostStatus.name)
+        putLong(KEY_LAST_ENGINE_HOST_AT, snapshot.lastEngineHostAtEpochMs ?: -1L)
+        putString(KEY_LAST_ENGINE_HOST_SUMMARY, snapshot.lastEngineHostSummary)
+        putString(KEY_ENGINE_SESSION_STATUS, snapshot.engineSessionStatus.name)
+        putLong(KEY_LAST_ENGINE_SESSION_AT, snapshot.lastEngineSessionAtEpochMs ?: -1L)
+        putString(KEY_LAST_ENGINE_SESSION_SUMMARY, snapshot.lastEngineSessionSummary)
+        putString(KEY_ENGINE_SESSION_HEALTH_STATUS, snapshot.engineSessionHealthStatus.name)
+        putLong(KEY_LAST_ENGINE_HEALTH_AT, snapshot.lastEngineHealthAtEpochMs ?: -1L)
+        putString(KEY_LAST_ENGINE_HEALTH_SUMMARY, snapshot.lastEngineHealthSummary)
+        putString(KEY_SESSION_WORKSPACE_PATH, snapshot.sessionWorkspacePath)
+        putString(KEY_LAST_ERROR, snapshot.lastError)
+    }
+
+    fun decodeSnapshot(bundle: Bundle): VpnRuntimeSnapshot = VpnRuntimeSnapshot(
+        phase = bundle.getString(KEY_PHASE)?.let(VpnRuntimePhase::valueOf) ?: VpnRuntimePhase.IDLE,
+        configHash = bundle.getString(KEY_CONFIG_HASH),
+        sessionLabel = bundle.getString(KEY_SESSION_LABEL),
+        engineId = bundle.getString(KEY_ENGINE_ID),
+        engineFormat = bundle.getString(KEY_ENGINE_FORMAT),
+        compiledPayloadBytes = bundle.getInt(KEY_COMPILED_PAYLOAD_BYTES, 0),
+        allowCount = bundle.getInt(KEY_ALLOW_COUNT, 0),
+        denyCount = bundle.getInt(KEY_DENY_COUNT, 0),
+        routeCount = bundle.getInt(KEY_ROUTE_COUNT, 0),
+        excludedRouteCount = bundle.getInt(KEY_EXCLUDED_ROUTE_COUNT, 0),
+        mtu = bundle.getInt(KEY_MTU, -1).takeIf { it >= 0 },
+        runtimeMode = bundle.getString(KEY_RUNTIME_MODE)
+            ?.let(TunnelSessionPlan.RuntimeMode::valueOf)
+            ?: TunnelSessionPlan.RuntimeMode.FAIL_CLOSED_UNTIL_ENGINE_HOST,
+        auditStatus = bundle.getString(KEY_AUDIT_STATUS)
+            ?.let(RuntimeAuditStatus::valueOf)
+            ?: RuntimeAuditStatus.NOT_RUN,
+        auditFindingCount = bundle.getInt(KEY_AUDIT_FINDING_COUNT, 0),
+        lastAuditAtEpochMs = bundle.getLong(KEY_LAST_AUDIT_AT, -1L).takeIf { it >= 0L },
+        lastAuditSummary = bundle.getString(KEY_LAST_AUDIT_SUMMARY),
+        bootstrapStatus = bundle.getString(KEY_BOOTSTRAP_STATUS)
+            ?.let(TunnelBootstrapStatus::valueOf)
+            ?: TunnelBootstrapStatus.NOT_ATTEMPTED,
+        lastBootstrapAtEpochMs = bundle.getLong(KEY_LAST_BOOTSTRAP_AT, -1L).takeIf { it >= 0L },
+        lastBootstrapSummary = bundle.getString(KEY_LAST_BOOTSTRAP_SUMMARY),
+        engineHostStatus = bundle.getString(KEY_ENGINE_HOST_STATUS)
+            ?.let(EmbeddedEngineHostStatus::valueOf)
+            ?: EmbeddedEngineHostStatus.NOT_PREPARED,
+        lastEngineHostAtEpochMs = bundle.getLong(KEY_LAST_ENGINE_HOST_AT, -1L).takeIf { it >= 0L },
+        lastEngineHostSummary = bundle.getString(KEY_LAST_ENGINE_HOST_SUMMARY),
+        engineSessionStatus = bundle.getString(KEY_ENGINE_SESSION_STATUS)
+            ?.let(EmbeddedEngineSessionStatus::valueOf)
+            ?: EmbeddedEngineSessionStatus.NOT_STARTED,
+        lastEngineSessionAtEpochMs = bundle.getLong(KEY_LAST_ENGINE_SESSION_AT, -1L).takeIf { it >= 0L },
+        lastEngineSessionSummary = bundle.getString(KEY_LAST_ENGINE_SESSION_SUMMARY),
+        engineSessionHealthStatus = bundle.getString(KEY_ENGINE_SESSION_HEALTH_STATUS)
+            ?.let(EmbeddedEngineSessionHealthStatus::valueOf)
+            ?: EmbeddedEngineSessionHealthStatus.UNKNOWN,
+        lastEngineHealthAtEpochMs = bundle.getLong(KEY_LAST_ENGINE_HEALTH_AT, -1L).takeIf { it >= 0L },
+        lastEngineHealthSummary = bundle.getString(KEY_LAST_ENGINE_HEALTH_SUMMARY),
+        sessionWorkspacePath = bundle.getString(KEY_SESSION_WORKSPACE_PATH),
+        lastError = bundle.getString(KEY_LAST_ERROR),
+    )
+
+    fun decodeError(bundle: Bundle): String? = bundle.getString(KEY_ERROR_MESSAGE)
+
+    private fun encodeSplitTunnelMode(mode: SplitTunnelMode): String = when (mode) {
+        SplitTunnelMode.FullTunnel -> "FULL"
+        is SplitTunnelMode.Allowlist -> "ALLOW"
+        is SplitTunnelMode.Denylist -> "DENY"
+    }
+
+    private fun decodeSplitTunnelMode(
+        value: String?,
+        allowedPackages: List<String>,
+        disallowedPackages: List<String>,
+    ): SplitTunnelMode = when (value) {
+        "ALLOW" -> SplitTunnelMode.Allowlist(allowedPackages)
+        "DENY" -> SplitTunnelMode.Denylist(disallowedPackages)
+        else -> SplitTunnelMode.FullTunnel
+    }
+
+    private const val MAX_COMPILED_PAYLOAD_BYTES: Int = 262_144
+    private const val MAX_PROFILE_JSON_BYTES: Int = 65_536
+}

@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    tags-ignore:
+      - "v*"
+  pull_request:
+
+permissions: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+      - name: Install Android SDK Packages
+        run: |
+          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          yes | "${SDKMANAGER}" --licenses
+          "${SDKMANAGER}" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+      - name: Ensure Gradle Wrapper Is Executable
+        run: chmod +x gradlew
+      - name: Verify JVM and Android Build
+        run: ./gradlew test :vpnservice:testDebugUnitTest :app:assembleDebug :app:assembleInternal --no-configuration-cache
+      - name: Generate APK Checksums
+        run: |
+          sha256sum app/build/outputs/apk/debug/app-debug.apk > app/build/outputs/apk/debug/app-debug.apk.sha256
+          sha256sum app/build/outputs/apk/internal/app-internal.apk > app/build/outputs/apk/internal/app-internal.apk.sha256
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: tunguska-debug-apk
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/debug/app-debug.apk.sha256
+      - name: Upload Internal APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: tunguska-internal-apk
+          path: |
+            app/build/outputs/apk/internal/app-internal.apk
+            app/build/outputs/apk/internal/app-internal.apk.sha256
