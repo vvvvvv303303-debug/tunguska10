@@ -10,6 +10,7 @@ import android.system.OsConstants
 import android.util.Log
 import io.acionyx.tunguska.domain.CanonicalJson
 import io.acionyx.tunguska.domain.DnsMode
+import io.acionyx.tunguska.domain.EffectiveRoutingPolicyResolver
 import io.acionyx.tunguska.domain.EncryptedDnsKind
 import io.acionyx.tunguska.domain.NetworkProtocol
 import io.acionyx.tunguska.domain.ProfileIr
@@ -90,6 +91,21 @@ class XrayTun2SocksEmbeddedHost(
             return failure(
                 workspace = workspace,
                 summary = "The xray+tun2socks runtime helper is unavailable: $nativeBridgeStatus",
+            )
+        }
+        val geoAssetStatus = runCatching {
+            XrayGeoAssetStager.stage(
+                context = context,
+                workspaceRoot = workspace.rootDir,
+            )
+            null
+        }.getOrElse { error ->
+            error.message ?: error.javaClass.simpleName
+        }
+        if (geoAssetStatus != null) {
+            return failure(
+                workspace = workspace,
+                summary = "The xray+tun2socks geodata assets are unavailable: $geoAssetStatus",
             )
         }
         return EmbeddedEngineHostPreparation(
@@ -480,6 +496,38 @@ private data class XrayBinarySet(
     val tun2socks: File,
 )
 
+private object XrayGeoAssetStager {
+    fun stage(
+        context: Context,
+        workspaceRoot: File,
+    ) {
+        stageAsset(
+            context = context,
+            workspaceRoot = workspaceRoot,
+            assetName = "geoip.dat",
+        )
+        stageAsset(
+            context = context,
+            workspaceRoot = workspaceRoot,
+            assetName = "geosite.dat",
+        )
+    }
+
+    private fun stageAsset(
+        context: Context,
+        workspaceRoot: File,
+        assetName: String,
+    ) {
+        val destination = File(workspaceRoot, assetName)
+        context.assets.open("xray/$assetName").use { input ->
+            destination.outputStream().use { output -> input.copyTo(output) }
+        }
+        require(destination.isFile && destination.length() > 0L) {
+            "Failed to stage $assetName into ${destination.absolutePath}."
+        }
+    }
+}
+
 private object XrayBinaryLocator {
     fun locate(context: Context): XrayBinarySet {
         val libDir = File(context.applicationInfo.nativeLibraryDir)
@@ -766,7 +814,11 @@ internal object XrayCompatConfigCompiler {
         profile: ProfileIr,
         dnsPlan: XrayDnsPlan,
     ): JsonObject = buildJsonObject {
-        put("domainStrategy", if (dnsPlan.proxyDns) "IPIfNonMatch" else "UseIP")
+        val effectiveRouting = EffectiveRoutingPolicyResolver.resolve(profile)
+        val requiresIpResolution = effectiveRouting.rules.any { rule ->
+            rule.match.ipCidrs.isNotEmpty() || rule.match.geoIps.isNotEmpty()
+        }
+        put("domainStrategy", if (dnsPlan.proxyDns || requiresIpResolution) "IPIfNonMatch" else "AsIs")
         put("rules", buildJsonArray {
             if (dnsPlan.proxyDns) {
                 add(
@@ -778,7 +830,7 @@ internal object XrayCompatConfigCompiler {
                     },
                 )
             }
-            profile.routing.rules.forEach { rule ->
+            effectiveRouting.rules.forEach { rule ->
                 add(routeRule(rule))
             }
             add(

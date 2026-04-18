@@ -10,6 +10,7 @@ import io.acionyx.tunguska.domain.SafetySettings
 import io.acionyx.tunguska.domain.SplitTunnelMode
 import io.acionyx.tunguska.domain.VlessRealityOutbound
 import io.acionyx.tunguska.domain.VpnPolicy
+import io.acionyx.tunguska.domain.defaultRegionalBypass
 
 internal fun defaultBootstrapProfile(): ProfileIr = ProfileIr(
     id = "alpha-secure",
@@ -29,6 +30,7 @@ internal fun defaultBootstrapProfile(): ProfileIr = ProfileIr(
     ),
     routing = RoutingPolicy(
         defaultAction = RouteAction.PROXY,
+        regionalBypass = defaultRegionalBypass(),
         rules = listOf(
             RouteRule(
                 id = "corp-direct",

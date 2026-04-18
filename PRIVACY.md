@@ -11,6 +11,7 @@ The app does not include analytics or telemetry by default.
 Tunguska stores the following categories locally:
 
 - imported VPN profiles
+- regional bypass preferences and the one-time decision for existing profiles
 - derived runtime metadata such as config hashes and route-preview state
 - encrypted profile backups and encrypted redacted diagnostic bundles
 - optional subscription configuration and related trust state for the frozen secondary surface
@@ -53,6 +54,8 @@ Import happens locally on the device.
 
 Unsupported parameters may be ignored with warnings, but unsafe flags are rejected.
 
+New and newly imported profiles default to `Russia direct`. Existing encrypted profiles are not silently changed; the app records a one-time local decision if the user accepts or declines the prompt.
+
 ## Diagnostic Privacy
 
 Tunguska supports two export classes:
@@ -70,6 +73,7 @@ The current runtime lane is designed to minimize local leakage.
 - no enabled Xray or sing-box management API in the active lane
 - no release-path debug endpoints
 - runtime listener audit to detect unexpected local exposure
+- regional bypass is enforced client-side, so direct destinations do not traverse the VPN server path
 
 ## What Tunguska Does Not Promise Yet
 
@@ -95,4 +99,3 @@ The user controls:
 - whether to grant camera permission
 - whether to export encrypted backup or redacted diagnostics
 - whether to use the frozen subscription surface at all
-

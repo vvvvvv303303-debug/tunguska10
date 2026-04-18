@@ -22,6 +22,7 @@ class ProfileImportParserTest {
         assertEquals("vless", imported.source.rawScheme)
         assertEquals("vless", imported.source.normalizedScheme)
         assertTrue(imported.warnings.isEmpty())
+        assertEquals(listOf(RegionalBypassPresetId.RUSSIA), imported.profile.routing.regionalBypass.enabledPresets)
     }
 
     @Test
@@ -84,11 +85,56 @@ class ProfileImportParserTest {
     @Test
     fun `parses canonical json profile`() {
         val profile = sampleProfile()
+        val profileJsonWithoutRegionalBypass = """
+            {
+              "id": "${profile.id}",
+              "name": "${profile.name}",
+              "outbound": {
+                "address": "${profile.outbound.address}",
+                "port": ${profile.outbound.port},
+                "uuid": "${profile.outbound.uuid}",
+                "serverName": "${profile.outbound.serverName}",
+                "realityPublicKey": "${profile.outbound.realityPublicKey}",
+                "realityShortId": "${profile.outbound.realityShortId}",
+                "utlsFingerprint": "${profile.outbound.utlsFingerprint}"
+              },
+              "vpn": {
+                "splitTunnel": {
+                  "kind": "full_tunnel"
+                }
+              },
+              "routing": {
+                "defaultAction": "PROXY",
+                "rules": []
+              },
+              "dns": {
+                "kind": "system_dns"
+              },
+              "safety": {
+                "safeMode": true,
+                "compatibilityLocalProxy": false,
+                "debugEndpointsEnabled": false
+              }
+            }
+        """.trimIndent()
+
+        val imported = ProfileImportParser.parse(profileJsonWithoutRegionalBypass)
+
+        assertEquals(listOf(RegionalBypassPresetId.RUSSIA), imported.profile.routing.regionalBypass.enabledPresets)
+        assertEquals(ImportedProfileFormat.JSON_PROFILE, imported.source.format)
+    }
+
+    @Test
+    fun `preserves explicit empty regional bypass from json`() {
+        val profile = sampleProfile().copy(
+            routing = RoutingPolicy(
+                regionalBypass = RegionalBypassSettings(),
+            ),
+        )
 
         val imported = ProfileImportParser.parse(profile.canonicalJson())
 
-        assertEquals(profile, imported.profile)
-        assertEquals(ImportedProfileFormat.JSON_PROFILE, imported.source.format)
+        assertTrue(imported.profile.routing.regionalBypass.enabledPresets.isEmpty())
     }
 
     @Test

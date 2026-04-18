@@ -11,6 +11,7 @@ Tunguska currently focuses on one path:
 - import a profile from a share link or QR code
 - validate and preview the normalized profile
 - save it into encrypted local storage
+- keep routing intent explicit, including regional bypass defaults
 - obtain Android VPN permission
 - connect, monitor runtime health, and stop cleanly
 - export encrypted backup or redacted diagnostics when needed
@@ -77,6 +78,7 @@ The active MVP runtime lane is `xray+tun2socks`.
 - the bridge binds only to `127.0.0.1`
 - the bridge uses a random high port and random credentials per session
 - management APIs, debug endpoints, and pprof-style listeners are not enabled in the active lane
+- `geoip.dat` and `geosite.dat` are staged into the runtime workspace from the pinned Xray asset set
 
 `libbox` is still bundled as a secondary comparison lane, but it is not the active runtime used for the current release.
 
@@ -104,6 +106,49 @@ Tunguska supports three routing modes:
 Split routing is enforced through `VpnService.Builder` package policy, not only through UI state. The app package itself is excluded from the tunnel when required by the runtime lane. Loopback traffic is kept local by design.
 
 The UI also exposes a deterministic route preview so the user can inspect how a destination would be handled before connecting.
+
+## Regional Bypass
+
+Tunguska also exposes a higher-level regional bypass layer above the ordinary route-rule list.
+
+- shipping scope in the current release is `RU First`
+- new and newly imported profiles default to `Russia direct`
+- existing encrypted profiles are not silently changed; the app asks once whether to enable the preset
+
+The default `RU+` preset expands to:
+
+- `.ru`
+- `.su`
+- `.рф` / `xn--p1ai`
+- `geosite:ru`
+- `geoip:ru`
+
+Rule precedence is fixed:
+
+- split-tunnel package policy
+- explicit `BLOCK`
+- generated regional `DIRECT`
+- explicit `DIRECT` / `PROXY`
+- default action
+
+This keeps the behavior predictable:
+
+- Russian destinations stay direct by default
+- explicit block rules can still override them
+- explicit direct/proxy rules still work after the regional layer
+
+The first screen keeps the UX simple:
+
+- one `Russia direct` switch
+- one `Configure` action for advanced settings
+
+The advanced area adds:
+
+- `Always direct domains`
+- a route preview for host or IP input
+- a short explanation of precedence
+
+When a result depends on runtime geodata rather than a plain hostname suffix, the preview shows an explicit runtime hint instead of pretending it has already resolved `geosite` or `geoip`.
 
 ## DNS Behavior
 
@@ -152,6 +197,13 @@ Profiles and artifacts are stored in app-private encrypted form.
 
 Diagnostics are designed to be useful without dumping raw secrets into user-visible files.
 
+Regional bypass state is included in redacted form:
+
+- enabled preset ids
+- custom direct-domain count
+- generated regional-rule count
+- route-preview runtime dataset hints
+
 ## Security Properties
 
 Current security properties in the shipped code:
@@ -162,6 +214,7 @@ Current security properties in the shipped code:
 - no enabled Xray or sing-box management API in the active runtime lane
 - no deep-link import path enabled by default
 - no release-path claim of VPN invisibility
+- no silent migration of existing stored profiles into `RU direct`
 
 ## Current Limitations
 
@@ -169,6 +222,7 @@ Tunguska `v0.2.1` is a real sideload release, but it still has clear limits.
 
 - The current release is not Play-signed or store-distributed.
 - The active runtime uses an authenticated internal loopback bridge rather than a pure no-loopback embedded transport.
+- Server-side Xray blocking is only complementary. If the client intentionally routes a destination direct, the server will never see that traffic.
 - The full physical-device detector matrix is still pending. Functional traffic has been confirmed on a real phone, and headed emulator smoke now proves direct-vs-VPN IP change plus split-routing parity, but the detector suite is not fully closed yet.
 - Generic VPN visibility such as `TRANSPORT_VPN`, foreground notification presence, and `tun0` visibility is not treated as a defect by itself.
 

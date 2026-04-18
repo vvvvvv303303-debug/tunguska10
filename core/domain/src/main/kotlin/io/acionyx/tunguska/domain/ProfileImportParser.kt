@@ -4,6 +4,8 @@ import java.net.URI
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 
 private const val MAX_IMPORT_URI_CHARS: Int = 8_192
 
@@ -163,6 +165,9 @@ object ProfileImportParser {
                 flow = flow,
                 utlsFingerprint = query["fp"] ?: query["fingerprint"] ?: "chrome",
             ),
+            routing = RoutingPolicy(
+                regionalBypass = defaultRegionalBypass(),
+            ),
         )
 
         val validationIssues = profile.validate()
@@ -193,24 +198,39 @@ object ProfileImportParser {
             )
         }
 
+        val rawJson = try {
+            CanonicalJson.instance.decodeFromString<JsonObject>(input)
+        } catch (_: Exception) {
+            throw ProfileImportException(listOf(issue("import.json", "Import payload is not valid ProfileIr JSON.")))
+        }
+
         val profile = try {
             CanonicalJson.instance.decodeFromString<ProfileIr>(input)
         } catch (_: Exception) {
             throw ProfileImportException(listOf(issue("import.json", "Import payload is not valid ProfileIr JSON.")))
         }
+        val profileWithDefaults = if (rawJson.routingContainsRegionalBypass()) {
+            profile
+        } else {
+            profile.copy(
+                routing = profile.routing.copy(
+                    regionalBypass = defaultRegionalBypass(),
+                ),
+            )
+        }
 
         val issues = mutableListOf<ValidationIssue>()
-        issues += profile.validate()
-        if (!profile.safety.safeMode) {
+        issues += profileWithDefaults.validate()
+        if (!profileWithDefaults.safety.safeMode) {
             issues += issue("import.safety.safeMode", "Imported profiles must keep safe mode enabled in v1.")
         }
-        if (profile.safety.compatibilityLocalProxy) {
+        if (profileWithDefaults.safety.compatibilityLocalProxy) {
             issues += issue(
                 "import.safety.compatibilityLocalProxy",
                 "Imported profiles cannot enable compatibility localhost proxy mode.",
             )
         }
-        if (profile.safety.debugEndpointsEnabled) {
+        if (profileWithDefaults.safety.debugEndpointsEnabled) {
             issues += issue(
                 "import.safety.debugEndpointsEnabled",
                 "Imported profiles cannot enable debug endpoints.",
@@ -221,7 +241,7 @@ object ProfileImportParser {
         }
 
         return ImportedProfile(
-            profile = profile,
+            profile = profileWithDefaults,
             source = ImportedProfileSource(
                 rawScheme = "json",
                 normalizedScheme = "json",
@@ -273,4 +293,9 @@ object ProfileImportParser {
     )
 
     private val SUPPORTED_URI_SCHEMES = setOf("vless", "ess")
+}
+
+private fun JsonObject.routingContainsRegionalBypass(): Boolean {
+    val routing = this["routing"]?.jsonObject ?: return false
+    return routing.containsKey("regionalBypass")
 }

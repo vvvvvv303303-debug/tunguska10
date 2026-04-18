@@ -96,8 +96,10 @@ sealed interface SplitTunnelMode {
 data class RoutingPolicy(
     val defaultAction: RouteAction = RouteAction.PROXY,
     val rules: List<RouteRule> = emptyList(),
+    val regionalBypass: RegionalBypassSettings = RegionalBypassSettings(),
 ) {
     fun validate(): List<ValidationIssue> = buildList {
+        addAll(regionalBypass.validate())
         val duplicateIds = rules.groupingBy(RouteRule::id).eachCount().filterValues { it > 1 }.keys
         duplicateIds.forEach { id ->
             add(ValidationIssue("routing.rules", "Duplicate route rule id '$id'."))

@@ -4,7 +4,7 @@
 
 - Project: Tunguska
 - Status: current implementation specification
-- Release line: `v0.1.x`
+- Release line: `v0.2.x`
 - Source of truth for research background: [deep-research-report (3).md](./deep-research-report%20(3).md)
 
 This document describes the product as it exists now and the boundaries it intentionally keeps.
@@ -43,6 +43,22 @@ Supported protocol subset:
 - `encryption=none` or omitted
 - optional `xtls-rprx-vision` flow
 
+### Routing model
+
+The supported routing model combines:
+
+- full tunnel
+- app allowlist
+- app denylist
+- regional bypass presets
+- explicit direct / proxy / block rules
+
+The shipping preset is `RU First`.
+
+- new and newly imported profiles default to `RU+`
+- `RU+` expands to `.ru`, `.su`, `.рф` / `xn--p1ai`, `geosite:ru`, and `geoip:ru`
+- existing stored profiles are not silently rewritten; the app asks once whether to enable the preset
+
 ### Primary User Flow
 
 The primary product flow is:
@@ -64,11 +80,12 @@ The primary product flow is:
 
 ### Active runtime lane
 
-The active runtime lane for `v0.1.x` is `xray+tun2socks`.
+The active runtime lane for `v0.2.x` is `xray+tun2socks`.
 
 - Android `VpnService` retains ownership of the TUN descriptor
 - Xray is packaged from the Linux release lane for the current Android MVP path
 - imported share-link profiles default to `SystemDns`; explicit JSON profiles may still carry custom DNS settings
+- `geoip.dat` and `geosite.dat` are staged into the runtime workspace from the pinned Xray asset set
 
 Required properties:
 
@@ -95,8 +112,15 @@ Required properties:
 ### Routing
 
 - full tunnel, allowlist, and denylist are supported
+- `RU First` regional bypass is supported
 - loopback must remain local
 - route preview must reflect the same policy model used by the runtime
+- effective precedence is fixed:
+  - split-tunnel package policy
+  - explicit `BLOCK`
+  - generated regional `DIRECT`
+  - explicit `DIRECT` / `PROXY`
+  - default action
 
 ### Runtime hardening
 
@@ -139,6 +163,8 @@ The release line is considered materially correct when:
 - import by image QR works
 - VPN permission flow works
 - Chrome or another routed client shows a different public IP under VPN than without VPN
+- the default `RU+` preset keeps Russian destinations direct
+- a non-RU public-IP endpoint still goes through the VPN
 - stopping the VPN returns the client to the direct IP
 - split routing behaves as configured
 - listener self-audit and watchdog fail closed on violation

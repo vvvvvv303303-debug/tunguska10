@@ -2,6 +2,7 @@ package io.acionyx.tunguska.vpnservice
 
 import io.acionyx.tunguska.domain.DnsMode
 import io.acionyx.tunguska.domain.ProfileIr
+import io.acionyx.tunguska.domain.defaultRegionalBypass
 import io.acionyx.tunguska.domain.RouteAction
 import io.acionyx.tunguska.domain.RouteMatch
 import io.acionyx.tunguska.domain.RouteRule
@@ -91,6 +92,47 @@ class XrayCompatConfigCompilerTest {
                 val json = rule.jsonObject
                 json["outboundTag"]?.jsonPrimitive?.content == "proxy" &&
                     json["inboundTag"]?.jsonArray?.any { it.jsonPrimitive.content == "socks-in" } == true
+            },
+        )
+    }
+
+    @Test
+    fun `compiler emits regional bypass rules before general proxy routing`() {
+        val compiled = XrayCompatConfigCompiler.compile(
+            profile = sampleProfile().copy(
+                routing = sampleProfile().routing.copy(
+                    regionalBypass = defaultRegionalBypass(),
+                ),
+            ),
+            bridge = AuthenticatedLocalBridge(
+                port = 25001,
+                user = "bridge-user",
+                password = "bridge-pass",
+            ),
+        )
+
+        val root = Json.parseToJsonElement(compiled.json).jsonObject
+        val routing = root.getValue("routing").jsonObject
+        val rules = routing.getValue("rules").jsonArray
+        val regionalRuleIndex = rules.indexOfFirst { rule ->
+            val domain = rule.jsonObject["domain"]?.jsonArray ?: return@indexOfFirst false
+            domain.any { it.jsonPrimitive.content == "geosite:ru" }
+        }
+        val defaultProxyIndex = rules.indexOfFirst { rule ->
+            rule.jsonObject["outboundTag"]?.jsonPrimitive?.content == "proxy" &&
+                rule.jsonObject["inboundTag"]?.jsonArray?.any { it.jsonPrimitive.content == "socks-in" } == true
+        }
+
+        assertEquals("IPIfNonMatch", routing.getValue("domainStrategy").jsonPrimitive.content)
+        assertTrue(regionalRuleIndex in 0 until defaultProxyIndex)
+        assertTrue(
+            rules[regionalRuleIndex].jsonObject.getValue("domain").jsonArray.any {
+                it.jsonPrimitive.content == "domain:xn--p1ai"
+            },
+        )
+        assertTrue(
+            rules[regionalRuleIndex].jsonObject.getValue("ip").jsonArray.any {
+                it.jsonPrimitive.content == "geoip:ru"
             },
         )
     }

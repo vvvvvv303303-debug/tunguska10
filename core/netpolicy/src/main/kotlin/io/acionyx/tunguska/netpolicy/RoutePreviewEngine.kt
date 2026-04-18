@@ -3,9 +3,12 @@ package io.acionyx.tunguska.netpolicy
 import io.acionyx.tunguska.domain.NetworkProtocol
 import io.acionyx.tunguska.domain.ProfileIr
 import io.acionyx.tunguska.domain.RouteAction
+import io.acionyx.tunguska.domain.EffectiveRoutingPolicyResolver
 import io.acionyx.tunguska.domain.RouteMatch
 import io.acionyx.tunguska.domain.RouteRule
+import io.acionyx.tunguska.domain.RegionalBypassPresetId
 import io.acionyx.tunguska.domain.SplitTunnelMode
+import io.acionyx.tunguska.domain.normalizeDomainForMatching
 import java.net.InetAddress
 
 data class RoutePreviewRequest(
@@ -20,6 +23,7 @@ data class RoutePreviewOutcome(
     val action: RouteAction,
     val matchedRuleId: String?,
     val reason: String,
+    val runtimeDatasetHint: String? = null,
 )
 
 class RoutePreviewEngine {
@@ -34,18 +38,25 @@ class RoutePreviewEngine {
 
         splitTunnelOutcome(profile, request.packageName)?.let { return it }
 
-        profile.routing.rules.firstOrNull { rule -> matches(rule, request) }?.let { matchedRule ->
+        val effectiveRouting = EffectiveRoutingPolicyResolver.resolve(profile)
+        effectiveRouting.rules.firstOrNull { rule -> matches(rule, request) }?.let { matchedRule ->
             return RoutePreviewOutcome(
                 action = matchedRule.action,
                 matchedRuleId = matchedRule.id,
-                reason = "Matched explicit routing rule '${matchedRule.id}'.",
+                reason = when (matchedRule.id) {
+                    "__regional_bypass_russia__" -> "Matched regional bypass preset 'Russia'."
+                    "__regional_bypass_custom_direct__" -> "Matched a custom direct domain in Regional Bypass."
+                    else -> "Matched explicit routing rule '${matchedRule.id}'."
+                },
             )
         }
 
+        val runtimeDatasetHint = runtimeDatasetHint(profile, request)
         return RoutePreviewOutcome(
             action = profile.routing.defaultAction,
             matchedRuleId = null,
             reason = "No explicit rule matched; using routing default.",
+            runtimeDatasetHint = runtimeDatasetHint,
         )
     }
 
@@ -91,13 +102,18 @@ class RoutePreviewEngine {
         val host = request.destinationHost?.lowercase() ?: return match.domainExact.isEmpty() &&
             match.domainSuffix.isEmpty() &&
             match.domainKeyword.isEmpty()
+        val normalizedHost = normalizeDomainForMatching(host) ?: host
 
-        val exact = match.domainExact.isEmpty() || host in match.domainExact.map { it.lowercase() }
+        val exact = match.domainExact.isEmpty() || match.domainExact.any { candidate ->
+            val normalizedCandidate = normalizeDomainForMatching(candidate) ?: candidate.lowercase()
+            normalizedHost == normalizedCandidate
+        }
         val suffix = match.domainSuffix.isEmpty() || match.domainSuffix.any { suffix ->
-            host == suffix.lowercase() || host.endsWith(".${suffix.lowercase()}")
+            val normalizedSuffix = normalizeDomainForMatching(suffix) ?: suffix.lowercase()
+            normalizedHost == normalizedSuffix || normalizedHost.endsWith(".$normalizedSuffix")
         }
         val keyword = match.domainKeyword.isEmpty() || match.domainKeyword.any { keyword ->
-            host.contains(keyword.lowercase())
+            normalizedHost.contains((normalizeDomainForMatching(keyword) ?: keyword.lowercase()))
         }
         return exact && suffix && keyword
     }
@@ -134,6 +150,26 @@ class RoutePreviewEngine {
             runCatching { InetAddress.getByName(candidate).isLoopbackAddress }.getOrDefault(false)
         } ?: false
     }
+
+    private fun runtimeDatasetHint(profile: ProfileIr, request: RoutePreviewRequest): String? {
+        val regionalBypass = profile.routing.regionalBypass
+        if (!regionalBypass.isPresetEnabled(RegionalBypassPresetId.RUSSIA)) {
+            return null
+        }
+        if (!request.destinationIp.isNullOrBlank()) {
+            return "Regional bypass can still apply at runtime via geoip:ru classification for the destination IP."
+        }
+        if (!request.destinationHost.isNullOrBlank()) {
+            val normalizedHost = normalizeDomainForMatching(request.destinationHost)
+            val suffixMatched = normalizedHost != null && listOf("ru", "su", "xn--p1ai").any { suffix ->
+                normalizedHost == suffix || normalizedHost.endsWith(".$suffix")
+            }
+            if (!suffixMatched) {
+                return "Regional bypass can still apply at runtime via geosite:ru even when the host does not end in .ru/.su/.рф."
+            }
+        }
+        return null
+    }
 }
 
 private fun String.inCidr(cidr: String): Boolean {
@@ -159,4 +195,3 @@ private fun String.inCidr(cidr: String): Boolean {
     }
     return true
 }
-

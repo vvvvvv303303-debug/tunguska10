@@ -1,6 +1,6 @@
 # MVP Device Validation
 
-This document defines the real-device validation matrix for Tunguska `v0.1.x`.
+This document defines the real-device validation matrix for Tunguska `v0.2.x`.
 
 ## Current Status
 
@@ -57,13 +57,15 @@ Helper scripts:
 4. Import the same profile by image QR.
 5. Save the validated profile and obtain `VpnService` permission.
 6. Connect, confirm Chrome or another routed client moves to the VPN egress IP, disconnect, and reconnect.
-7. Validate full tunnel, allowlist, and denylist behavior with at least one excluded app and one routed app.
-8. Confirm loopback stays local.
-9. Run `RKNHardering` and confirm no bypass-grade findings.
-10. Run `VPN-Detector` and treat generic VPN visibility as informational unless it demonstrates a practical leak.
-11. Run `per-app-split-bypass-poc` and confirm no usable unauthenticated localhost proxy is exposed.
-12. Run a Termux-style excluded-app public-IP check and capture whether tunnel egress can be reproduced.
-13. Export a redacted diagnostic bundle and attach it to the validation report.
+7. With the default `RU+` preset enabled, open a Russian destination in Chrome and confirm it stays direct.
+8. Open a non-RU public-IP endpoint and confirm it still goes through the VPN.
+9. Validate full tunnel, allowlist, and denylist behavior with at least one excluded app and one routed app.
+10. Confirm loopback stays local.
+11. Run `RKNHardering` and confirm no bypass-grade findings.
+12. Run `VPN-Detector` and treat generic VPN visibility as informational unless it demonstrates a practical leak.
+13. Run `per-app-split-bypass-poc` and confirm no usable unauthenticated localhost proxy is exposed.
+14. Run a Termux-style excluded-app public-IP check and capture whether tunnel egress can be reproduced.
+15. Export a redacted diagnostic bundle and attach it to the validation report.
 
 ## Acceptance Notes
 

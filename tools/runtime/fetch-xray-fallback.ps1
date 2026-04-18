@@ -6,11 +6,13 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\\..")
 $jniLibsRoot = Join-Path $repoRoot "vpnservice\\src\\main\\jniLibs"
+$xrayAssetsRoot = Join-Path $repoRoot "vpnservice\\src\\main\\assets\\xray"
 $cppSource = Join-Path $repoRoot "vpnservice\\src\\main\\cpp\\vpn_helper.cpp"
 $ndkBin = Join-Path $env:LOCALAPPDATA "Android\\Sdk\\ndk\\28.0.13004108\\toolchains\\llvm\\prebuilt\\windows-x86_64\\bin"
 $tmpRoot = Join-Path $repoRoot ".tmp\\xray-fallback"
 
 New-Item -ItemType Directory -Force -Path $jniLibsRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $xrayAssetsRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $tmpRoot | Out-Null
 
 function Get-XrayAssetName([string]$abi) {
@@ -58,6 +60,19 @@ foreach ($abi in $Abis) {
         throw "Unable to locate xray binary for $abi"
     }
     Copy-Item -Force $xrayBinary.FullName (Join-Path $abiDir "libxray.so")
+
+    if ($abi -eq "x86_64") {
+        $geoIpDat = Get-ChildItem -Path (Join-Path $abiTmp "xray") -Recurse -File | Where-Object { $_.Name -eq "geoip.dat" } | Select-Object -First 1
+        $geoSiteDat = Get-ChildItem -Path (Join-Path $abiTmp "xray") -Recurse -File | Where-Object { $_.Name -eq "geosite.dat" } | Select-Object -First 1
+        if (-not $geoIpDat) {
+            throw "Unable to locate geoip.dat in the Xray archive"
+        }
+        if (-not $geoSiteDat) {
+            throw "Unable to locate geosite.dat in the Xray archive"
+        }
+        Copy-Item -Force $geoIpDat.FullName (Join-Path $xrayAssetsRoot "geoip.dat")
+        Copy-Item -Force $geoSiteDat.FullName (Join-Path $xrayAssetsRoot "geosite.dat")
+    }
 
     Invoke-WebRequest -Uri "https://github.com/xjasonlyu/tun2socks/releases/latest/download/$tunAsset" -OutFile $tunZip
     Expand-Archive -Path $tunZip -DestinationPath (Join-Path $abiTmp "tun2socks") -Force

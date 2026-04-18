@@ -2,6 +2,7 @@ package io.acionyx.tunguska.engine.singbox
 
 import io.acionyx.tunguska.domain.CanonicalJson
 import io.acionyx.tunguska.domain.DnsMode
+import io.acionyx.tunguska.domain.EffectiveRoutingPolicyResolver
 import io.acionyx.tunguska.domain.EncryptedDnsKind
 import io.acionyx.tunguska.domain.ProfileIr
 import io.acionyx.tunguska.domain.RouteAction
@@ -111,6 +112,7 @@ class SingboxEnginePlugin : EnginePlugin {
     }
 
     private fun route(profile: ProfileIr): JsonObject = buildJsonObject {
+        val effectiveRouting = EffectiveRoutingPolicyResolver.resolve(profile)
         put("auto_detect_interface", true)
         put("default_domain_resolver", LOCAL_DNS_TAG)
         if (profile.routing.defaultAction != RouteAction.BLOCK) {
@@ -120,7 +122,7 @@ class SingboxEnginePlugin : EnginePlugin {
             add(sniffRule())
             add(mandatoryLoopbackBypassRule())
             add(hijackDnsRule())
-            profile.routing.rules.forEach { rule ->
+            effectiveRouting.rules.forEach { rule ->
                 add(routeRule(rule))
             }
             if (profile.routing.defaultAction == RouteAction.BLOCK) {

@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document describes the current Tunguska threat model for the `v0.1.x` product line.
+This document describes the current Tunguska threat model for the `v0.2.x` product line.
 
 The active product path is:
 
@@ -36,6 +36,7 @@ The model does not assume protection against a fully compromised OS, kernel malw
 - prevent unauthenticated or debug-manageable localhost exposure
 - prevent obvious split-tunnel bypass through the app's own local runtime surfaces
 - keep loopback local
+- keep intentionally bypassed regional traffic outside the VPN when the client policy requires it
 - keep profile material encrypted at rest
 - keep diagnostics redacted by default
 - fail closed when runtime assumptions are violated
@@ -81,6 +82,8 @@ Generic VPN visibility is not treated as a release blocker unless it also proves
 
 - Split routing is enforced through `VpnService.Builder` package policy.
 - Full tunnel, allowlist, and denylist are modeled explicitly.
+- Regional bypass presets are compiled into deterministic direct rules before ordinary direct/proxy rules.
+- The shipping preset is `RU First`, covering `.ru`, `.su`, `.рф` / `xn--p1ai`, `geosite:ru`, and `geoip:ru`.
 - Loopback preservation is treated as part of the routing contract.
 
 ### Listener self-audit
@@ -108,6 +111,7 @@ These risks are known and currently accepted or still under validation:
 
 - The active runtime still uses an internal authenticated loopback bridge instead of a pure no-loopback data plane.
 - The full detector matrix has not yet been completed on physical hardware, even though functional tunneled traffic has already been confirmed on a real phone.
+- Server-side Xray blocking can only reject traffic that reaches the VPN server; it cannot catch traffic that the client intentionally routes direct.
 - Subscription and notification code still exists in the app process, even though it is not the primary product path.
 - The current public release is a sideload release, not a final store-distributed production channel.
 

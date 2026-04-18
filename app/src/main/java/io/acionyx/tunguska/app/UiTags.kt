@@ -13,4 +13,9 @@ object UiTags {
     const val REFRESH_RUNTIME_BUTTON = "refresh_runtime_button"
     const val RESTAGE_RUNTIME_BUTTON = "restage_runtime_button"
     const val SHOW_DIAGNOSTICS_BUTTON = "show_diagnostics_button"
+    const val RUSSIA_DIRECT_SWITCH = "russia_direct_switch"
+    const val CONFIGURE_REGIONAL_BYPASS_BUTTON = "configure_regional_bypass_button"
+    const val ADD_DIRECT_DOMAIN_BUTTON = "add_direct_domain_button"
+    const val ACCEPT_RUSSIA_DIRECT_PROMPT_BUTTON = "accept_russia_direct_prompt_button"
+    const val DECLINE_RUSSIA_DIRECT_PROMPT_BUTTON = "decline_russia_direct_prompt_button"
 }

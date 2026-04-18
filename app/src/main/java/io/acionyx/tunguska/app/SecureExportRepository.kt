@@ -4,6 +4,7 @@ import android.content.Context
 import io.acionyx.tunguska.crypto.CipherBox
 import io.acionyx.tunguska.domain.CanonicalJson
 import io.acionyx.tunguska.domain.DnsMode
+import io.acionyx.tunguska.domain.EffectiveRoutingPolicyResolver
 import io.acionyx.tunguska.domain.ProfileIr
 import io.acionyx.tunguska.domain.RouteAction
 import io.acionyx.tunguska.domain.SplitTunnelMode
@@ -83,9 +84,11 @@ class SecureExportRepository(
             routePreview = RedactedRoutePreviewReport(
                 packageHash = routePreview.packageName.takeIf { it.isNotBlank() }?.redactedDigest(),
                 destinationHostHash = routePreview.destinationHost.takeIf { it.isNotBlank() }?.redactedDigest(),
+                destinationIpHash = routePreview.destinationIp.takeIf { it.isNotBlank() }?.redactedDigest(),
                 destinationPort = routePreview.destinationPort.toIntOrNull(),
                 action = previewOutcome.action.name,
                 matchedRuleHash = previewOutcome.matchedRuleId?.redactedDigest(),
+                runtimeDatasetHint = previewOutcome.runtimeDatasetHint,
             ),
         )
         return writeArtifact(
@@ -210,6 +213,10 @@ private data class RedactedProfileReport(
     val proxyRuleCount: Int,
     val directRuleCount: Int,
     val blockRuleCount: Int,
+    val regionalBypassPresetCount: Int,
+    val regionalBypassPresetIds: List<String>,
+    val regionalBypassCustomDirectCount: Int,
+    val generatedRegionalRuleCount: Int,
     val dnsMode: String,
     val dnsEndpointHashes: List<String>,
     val safeMode: Boolean,
@@ -267,12 +274,15 @@ private data class RedactedStorageReport(
 private data class RedactedRoutePreviewReport(
     val packageHash: String?,
     val destinationHostHash: String?,
+    val destinationIpHash: String?,
     val destinationPort: Int?,
     val action: String,
     val matchedRuleHash: String?,
+    val runtimeDatasetHint: String?,
 )
 
 private fun ProfileIr.toRedactedReport(): RedactedProfileReport {
+    val effectiveRouting = EffectiveRoutingPolicyResolver.resolve(this)
     val splitTunnel = vpn.splitTunnel
     val allowCount = when (splitTunnel) {
         SplitTunnelMode.FullTunnel -> 0
@@ -299,9 +309,13 @@ private fun ProfileIr.toRedactedReport(): RedactedProfileReport {
         allowPackageCount = allowCount,
         denyPackageCount = denyCount,
         routingDefaultAction = routing.defaultAction.name,
-        proxyRuleCount = routing.rules.count { it.action == RouteAction.PROXY },
-        directRuleCount = routing.rules.count { it.action == RouteAction.DIRECT },
+        proxyRuleCount = effectiveRouting.rules.count { it.action == RouteAction.PROXY },
+        directRuleCount = effectiveRouting.rules.count { it.action == RouteAction.DIRECT },
         blockRuleCount = routing.rules.count { it.action == RouteAction.BLOCK },
+        regionalBypassPresetCount = effectiveRouting.enabledRegionalPresets.size,
+        regionalBypassPresetIds = effectiveRouting.enabledRegionalPresets.map { it.name },
+        regionalBypassCustomDirectCount = effectiveRouting.normalizedCustomDirectDomains.size,
+        generatedRegionalRuleCount = effectiveRouting.generatedRegionalRuleCount,
         dnsMode = dns::class.simpleName.orEmpty(),
         dnsEndpointHashes = when (val mode = dns) {
             is DnsMode.VpnDns -> mode.servers.map(String::redactedDigest)

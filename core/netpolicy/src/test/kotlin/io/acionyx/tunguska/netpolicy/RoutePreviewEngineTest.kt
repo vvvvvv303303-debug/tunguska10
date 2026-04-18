@@ -2,9 +2,11 @@ package io.acionyx.tunguska.netpolicy
 
 import io.acionyx.tunguska.domain.NetworkProtocol
 import io.acionyx.tunguska.domain.ProfileIr
+import io.acionyx.tunguska.domain.RegionalBypassSettings
 import io.acionyx.tunguska.domain.RouteAction
 import io.acionyx.tunguska.domain.RouteMatch
 import io.acionyx.tunguska.domain.RouteRule
+import io.acionyx.tunguska.domain.RegionalBypassPresetId
 import io.acionyx.tunguska.domain.RoutingPolicy
 import io.acionyx.tunguska.domain.SplitTunnelMode
 import io.acionyx.tunguska.domain.VlessRealityOutbound
@@ -59,6 +61,54 @@ class RoutePreviewEngineTest {
 
         assertEquals(RouteAction.DIRECT, outcome.action)
         assertEquals("corp-direct", outcome.matchedRuleId)
+    }
+
+    @Test
+    fun `russia preset sends ru domains direct`() {
+        val outcome = engine.evaluate(
+            profile = sampleProfile().copy(
+                routing = sampleProfile().routing.copy(
+                    regionalBypass = RegionalBypassSettings(
+                        enabledPresets = listOf(RegionalBypassPresetId.RUSSIA),
+                    ),
+                ),
+            ),
+            request = RoutePreviewRequest(
+                destinationHost = "yandex.ru",
+                destinationPort = 443,
+            ),
+        )
+
+        assertEquals(RouteAction.DIRECT, outcome.action)
+        assertEquals("__regional_bypass_russia__", outcome.matchedRuleId)
+    }
+
+    @Test
+    fun `block rules override russia direct`() {
+        val outcome = engine.evaluate(
+            profile = sampleProfile().copy(
+                routing = RoutingPolicy(
+                    defaultAction = RouteAction.PROXY,
+                    regionalBypass = RegionalBypassSettings(
+                        enabledPresets = listOf(RegionalBypassPresetId.RUSSIA),
+                    ),
+                    rules = listOf(
+                        RouteRule(
+                            id = "block-bank-ru",
+                            action = RouteAction.BLOCK,
+                            match = RouteMatch(domainSuffix = listOf("bank.ru")),
+                        ),
+                    ),
+                ),
+            ),
+            request = RoutePreviewRequest(
+                destinationHost = "online.bank.ru",
+                destinationPort = 443,
+            ),
+        )
+
+        assertEquals(RouteAction.BLOCK, outcome.action)
+        assertEquals("block-bank-ru", outcome.matchedRuleId)
     }
 }
 

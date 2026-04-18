@@ -12,6 +12,9 @@ import io.acionyx.tunguska.domain.ImportedProfile
 import io.acionyx.tunguska.domain.NetworkProtocol
 import io.acionyx.tunguska.domain.ProfileImportParser
 import io.acionyx.tunguska.domain.ProfileIr
+import io.acionyx.tunguska.domain.RegionalBypassPresetId
+import io.acionyx.tunguska.domain.defaultRegionalBypass
+import io.acionyx.tunguska.domain.normalizeDomainForRouting
 import io.acionyx.tunguska.engine.api.CompiledEngineConfig
 import io.acionyx.tunguska.engine.singbox.SingboxEnginePlugin
 import io.acionyx.tunguska.netpolicy.RoutePreviewEngine
@@ -33,6 +36,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val bootstrapProfile = defaultBootstrapProfile()
     private val defaultPreview = PreviewInputs()
     private val profileRepository = SecureProfileRepository(application)
+    private val regionalBypassPromptStore = RegionalBypassPromptStore(application)
     private val exportRepository = SecureExportRepository(application)
     private val subscriptionRepository = SecureSubscriptionRepository(application)
     private val subscriptionUpdateScheduler = SubscriptionUpdateScheduler(application)
@@ -83,11 +87,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updatePreview(
         packageName: String = uiState.routePreview.packageName,
         destinationHost: String = uiState.routePreview.destinationHost,
+        destinationIp: String = uiState.routePreview.destinationIp,
         destinationPort: String = uiState.routePreview.destinationPort,
     ) {
         val preview = PreviewInputs(
             packageName = packageName,
             destinationHost = destinationHost,
+            destinationIp = destinationIp,
             destinationPort = destinationPort,
         )
         uiState = uiState.copy(
@@ -98,6 +104,98 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun markVpnPermissionGranted() {
         uiState = uiState.copy(vpnPermissionGranted = true)
+    }
+
+    fun setRussiaDirectEnabled(enabled: Boolean) {
+        mutateProfile(
+            status = if (enabled) {
+                "Enabled Russia direct bypass."
+            } else {
+                "Disabled Russia direct bypass."
+            },
+            transform = { profile ->
+                val regionalBypass = profile.routing.regionalBypass
+                val enabledPresets = regionalBypass.enabledPresets.toMutableSet().apply {
+                    if (enabled) {
+                        add(RegionalBypassPresetId.RUSSIA)
+                    } else {
+                        remove(RegionalBypassPresetId.RUSSIA)
+                    }
+                }.toList()
+                profile.copy(
+                    routing = profile.routing.copy(
+                        regionalBypass = regionalBypass.copy(
+                            enabledPresets = enabledPresets,
+                        ),
+                    ),
+                )
+            },
+        )
+    }
+
+    fun addRegionalDirectDomain(rawDomain: String) {
+        val normalizedDomain = runCatching { normalizeDomainForRouting(rawDomain) }
+            .getOrElse { error ->
+                uiState = uiState.copy(
+                    regionalBypassStatus = null,
+                    regionalBypassError = error.message ?: error.javaClass.simpleName,
+                )
+                return
+            }
+        mutateProfile(
+            status = "Added '$normalizedDomain' to always-direct domains.",
+            transform = { profile ->
+                val regionalBypass = profile.routing.regionalBypass
+                profile.copy(
+                    routing = profile.routing.copy(
+                        regionalBypass = regionalBypass.copy(
+                            customDirectDomains = (regionalBypass.customDirectDomains + normalizedDomain).distinct(),
+                        ),
+                    ),
+                )
+            },
+        )
+    }
+
+    fun removeRegionalDirectDomain(domain: String) {
+        mutateProfile(
+            status = "Removed '$domain' from always-direct domains.",
+            transform = { profile ->
+                val regionalBypass = profile.routing.regionalBypass
+                profile.copy(
+                    routing = profile.routing.copy(
+                        regionalBypass = regionalBypass.copy(
+                            customDirectDomains = regionalBypass.customDirectDomains
+                                .map(::normalizeDomainForRouting)
+                                .filterNot { it == domain },
+                        ),
+                    ),
+                )
+            },
+        )
+    }
+
+    fun decideRegionalBypassPrompt(enableRussiaDirect: Boolean) {
+        regionalBypassPromptStore.markDecisionRecorded(uiState.profile.id)
+        uiState = uiState.copy(showRegionalBypassPrompt = false)
+        if (enableRussiaDirect) {
+            mutateProfile(
+                status = "Enabled Russia direct bypass for this existing profile.",
+                transform = { profile ->
+                    profile.copy(
+                        routing = profile.routing.copy(
+                            regionalBypass = defaultRegionalBypass(),
+                        ),
+                    )
+                },
+            )
+        } else {
+            uiState = uiState.copy(
+                regionalBypassStatus = "Kept the current routing policy without enabling Russia direct.",
+                regionalBypassError = null,
+                showRegionalBypassPrompt = false,
+            )
+        }
     }
 
     fun updateImportDraft(importDraft: String) {
@@ -144,6 +242,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         runCatching {
             imported to profileRepository.reseal(imported.profile)
         }.onSuccess { (stagedImport, storedProfile) ->
+            regionalBypassPromptStore.markDecisionRecorded(storedProfile.profile.id)
             Log.i(
                 TAG,
                 "Confirmed staged import profile='${storedProfile.profile.name}' " +
@@ -1084,6 +1183,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 scheduledFailureStreak = 0,
                 lastAlertStatus = subscriptionNotificationLedger.lastEvaluationStatus.name,
             ),
+            regionalBypassStatus = null,
+            regionalBypassError = null,
+            showRegionalBypassPrompt = false,
         )
     }
 
@@ -1098,7 +1200,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 applyStoredProfile(
                     storedProfile = result.storedProfile,
                     status = status,
+                    showRegionalBypassPrompt = regionalBypassPromptStore.shouldPrompt(
+                        profile = result.storedProfile.profile,
+                        seeded = result.seeded,
+                    ),
                 )
+                if (result.seeded) {
+                    regionalBypassPromptStore.markDecisionRecorded(result.storedProfile.profile.id)
+                }
             }
             .onFailure { error ->
                 applyProfile(
@@ -1107,6 +1216,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         status = "Encrypted profile load failed; keeping bootstrap state in memory only.",
                         error = error.message ?: error.javaClass.simpleName,
                     ),
+                    showRegionalBypassPrompt = false,
                 )
             }
     }
@@ -1351,9 +1461,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun mutateProfile(
+        status: String,
+        transform: (ProfileIr) -> ProfileIr,
+    ) {
+        runCatching {
+            val updatedProfile = transform(uiState.profile)
+            val storedProfile = profileRepository.reseal(updatedProfile)
+            regionalBypassPromptStore.markDecisionRecorded(updatedProfile.id)
+            storedProfile
+        }.onSuccess { storedProfile ->
+            applyStoredProfile(
+                storedProfile = storedProfile,
+                status = status,
+                showRegionalBypassPrompt = false,
+            )
+            uiState = uiState.copy(
+                regionalBypassStatus = status,
+                regionalBypassError = null,
+                showRegionalBypassPrompt = false,
+            )
+        }.onFailure { error ->
+            uiState = uiState.copy(
+                regionalBypassStatus = null,
+                regionalBypassError = error.message ?: error.javaClass.simpleName,
+            )
+        }
+    }
+
     private fun applyStoredProfile(
         storedProfile: StoredProfile,
         status: String,
+        showRegionalBypassPrompt: Boolean? = null,
     ) {
         applyProfile(
             profile = storedProfile.profile,
@@ -1367,12 +1506,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     Instant.ofEpochMilli(storedProfile.encryptedAtEpochMs),
                 ),
             ),
+            showRegionalBypassPrompt = showRegionalBypassPrompt,
         )
     }
 
     private fun applyProfile(
         profile: ProfileIr,
         profileStorage: ProfileStorageState,
+        showRegionalBypassPrompt: Boolean? = null,
     ) {
         clearStagedImport()
         val compiled = plugin.compile(profile)
@@ -1383,6 +1524,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             previewOutcome = evaluatePreview(uiState.routePreview, profile),
             profileStorage = profileStorage,
             importPreview = null,
+            showRegionalBypassPrompt = showRegionalBypassPrompt ?: uiState.showRegionalBypassPrompt,
         )
     }
 
@@ -1394,6 +1536,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         request = RoutePreviewRequest(
             packageName = preview.packageName.takeIf { it.isNotBlank() },
             destinationHost = preview.destinationHost.takeIf { it.isNotBlank() },
+            destinationIp = preview.destinationIp.takeIf { it.isNotBlank() },
             destinationPort = preview.destinationPort.toIntOrNull(),
             protocol = NetworkProtocol.TCP,
         ),
@@ -1419,6 +1562,9 @@ data class MainUiState(
     val vpnPermissionGranted: Boolean = false,
     val controlChannelConnected: Boolean = false,
     val controlError: String? = null,
+    val regionalBypassStatus: String? = null,
+    val regionalBypassError: String? = null,
+    val showRegionalBypassPrompt: Boolean = false,
 )
 
 data class ProfileStorageState(
@@ -1506,6 +1652,7 @@ data class ExportState(
 data class PreviewInputs(
     val packageName: String = "io.acionyx.browser",
     val destinationHost: String = "login.corp.example",
+    val destinationIp: String = "",
     val destinationPort: String = "443",
 )
 

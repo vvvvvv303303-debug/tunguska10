@@ -41,6 +41,18 @@ class ProfileRuntimeMigrationsTest {
         assertEquals(null, result.status)
     }
 
+    @Test
+    fun `migration does not silently enable russia direct on existing profiles`() {
+        val legacyProfile = sampleProfile(
+            dns = DnsMode.SystemDns,
+        )
+
+        val result = ProfileRuntimeMigrations.migrate(legacyProfile)
+
+        assertEquals(legacyProfile, result.profile)
+        assertEquals(null, result.status)
+    }
+
     private fun sampleProfile(dns: DnsMode): ProfileIr = ProfileIr(
         id = "alpha-secure",
         name = "Alpha Secure",

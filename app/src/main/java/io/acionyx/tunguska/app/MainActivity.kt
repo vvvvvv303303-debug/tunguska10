@@ -33,6 +33,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -53,6 +54,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import io.acionyx.tunguska.domain.RegionalBypassPresetId
+import io.acionyx.tunguska.domain.normalizeDomainForRouting
 import io.acionyx.tunguska.domain.SplitTunnelMode
 import io.acionyx.tunguska.vpnservice.VpnRuntimePhase
 import java.time.Instant
@@ -92,7 +95,9 @@ private fun TunguskaApp(
     val compactLayout = LocalConfiguration.current.screenWidthDp <= 320
     val subscriptionBringIntoViewRequester = remember { BringIntoViewRequester() }
     var showAdvancedDiagnostics by remember { mutableStateOf(false) }
+    var showRegionalBypassAdvanced by remember { mutableStateOf(false) }
     var showFrozenSecondarySurface by remember { mutableStateOf(false) }
+    var regionalDirectDomainDraft by remember { mutableStateOf("") }
     val requestNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         viewModel.refreshSubscriptionNotificationStatus()
     }
@@ -166,6 +171,29 @@ private fun TunguskaApp(
                         },
                         onStop = viewModel::stopRuntime,
                         onRefresh = viewModel::refreshRuntimeStatus,
+                    )
+
+                    RegionalBypassCard(
+                        state = state,
+                        expanded = showRegionalBypassAdvanced,
+                        customDirectDomainDraft = regionalDirectDomainDraft,
+                        onToggleRussia = viewModel::setRussiaDirectEnabled,
+                        onToggleExpanded = { showRegionalBypassAdvanced = !showRegionalBypassAdvanced },
+                        onCustomDirectDomainDraftChange = { regionalDirectDomainDraft = it },
+                        onAddCustomDirectDomain = {
+                            if (runCatching { normalizeDomainForRouting(regionalDirectDomainDraft) }.isSuccess) {
+                                viewModel.addRegionalDirectDomain(regionalDirectDomainDraft)
+                                regionalDirectDomainDraft = ""
+                            } else {
+                                viewModel.addRegionalDirectDomain(regionalDirectDomainDraft)
+                            }
+                        },
+                        onRemoveCustomDirectDomain = viewModel::removeRegionalDirectDomain,
+                        onPackageChange = { viewModel.updatePreview(packageName = it) },
+                        onHostChange = { viewModel.updatePreview(destinationHost = it) },
+                        onIpChange = { viewModel.updatePreview(destinationIp = it) },
+                        onPortChange = { viewModel.updatePreview(destinationPort = it) },
+                        onPromptDecision = viewModel::decideRegionalBypassPrompt,
                     )
 
                     ImportSection(
@@ -248,13 +276,6 @@ private fun TunguskaApp(
                     )
 
                     if (showAdvancedDiagnostics) {
-                        PreviewCard(
-                            state = state,
-                            onPackageChange = { viewModel.updatePreview(packageName = it) },
-                            onHostChange = { viewModel.updatePreview(destinationHost = it) },
-                            onPortChange = { viewModel.updatePreview(destinationPort = it) },
-                        )
-
                         DetailCard(
                             title = "Secure Profile Storage",
                             body = listOf(
@@ -540,6 +561,174 @@ private fun ConnectionOverviewCard(
 }
 
 @Composable
+private fun RegionalBypassCard(
+    state: MainUiState,
+    expanded: Boolean,
+    customDirectDomainDraft: String,
+    onToggleRussia: (Boolean) -> Unit,
+    onToggleExpanded: () -> Unit,
+    onCustomDirectDomainDraftChange: (String) -> Unit,
+    onAddCustomDirectDomain: () -> Unit,
+    onRemoveCustomDirectDomain: (String) -> Unit,
+    onPackageChange: (String) -> Unit,
+    onHostChange: (String) -> Unit,
+    onIpChange: (String) -> Unit,
+    onPortChange: (String) -> Unit,
+    onPromptDecision: (Boolean) -> Unit,
+) {
+    val regionalBypass = state.profile.routing.regionalBypass
+    val russiaDirectEnabled = regionalBypass.isPresetEnabled(RegionalBypassPresetId.RUSSIA)
+    val customDirectDomains = regionalBypass.customDirectDomains.distinct()
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFE7F0EB)),
+        shape = RoundedCornerShape(24.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFC7D9CF)),
+    ) {
+        Column(
+            modifier = Modifier.padding(if (rememberCompactLayout()) 16.dp else 20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("Regional Bypass", style = MaterialTheme.typography.titleLarge)
+            Text(
+                text = if (russiaDirectEnabled) {
+                    "Russia direct is on. .ru, .su, .рф, Russian domains from geosite:ru, and geoip:ru destinations bypass the VPN."
+                } else {
+                    "Russia direct is off. Russian destinations follow the normal VPN routing policy."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color(0xFF22332C),
+            )
+            if (rememberCompactLayout()) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Russia direct", style = MaterialTheme.typography.labelMedium, color = Color(0xFF5D6C63))
+                    Switch(
+                        checked = russiaDirectEnabled,
+                        onCheckedChange = onToggleRussia,
+                        modifier = Modifier.testTag(UiTags.RUSSIA_DIRECT_SWITCH),
+                    )
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text("Russia direct", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            ".ru, .su, .рф and Russian destinations stay outside the tunnel.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color(0xFF4E5E56),
+                        )
+                    }
+                    Switch(
+                        checked = russiaDirectEnabled,
+                        onCheckedChange = onToggleRussia,
+                        modifier = Modifier.testTag(UiTags.RUSSIA_DIRECT_SWITCH),
+                    )
+                }
+            }
+
+            if (state.showRegionalBypassPrompt) {
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = Color(0xFFF7E7D5),
+                    contentColor = Color(0xFF332214),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text(
+                            "Enable Russia direct for this existing profile?",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Text(
+                            "This keeps .ru, .su, .рф and Russian geosite/geoip destinations outside the VPN by default.",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        ActionGroup {
+                            ActionButton(
+                                text = "Enable",
+                                onClick = { onPromptDecision(true) },
+                                modifier = Modifier.testTag(UiTags.ACCEPT_RUSSIA_DIRECT_PROMPT_BUTTON),
+                            )
+                            ActionButton(
+                                text = "Keep Current",
+                                onClick = { onPromptDecision(false) },
+                                primary = false,
+                                modifier = Modifier.testTag(UiTags.DECLINE_RUSSIA_DIRECT_PROMPT_BUTTON),
+                            )
+                        }
+                    }
+                }
+            }
+
+            state.regionalBypassStatus?.let { status ->
+                Text(status, style = MaterialTheme.typography.bodyMedium, color = Color(0xFF214345))
+            }
+            state.regionalBypassError?.let { error ->
+                Text(error, style = MaterialTheme.typography.bodyMedium, color = Color(0xFF9C3B27))
+            }
+
+            ActionGroup {
+                ActionButton(
+                    text = if (expanded) "Hide Configure" else "Configure",
+                    onClick = onToggleExpanded,
+                    primary = false,
+                    modifier = Modifier.testTag(UiTags.CONFIGURE_REGIONAL_BYPASS_BUTTON),
+                )
+            }
+
+            if (expanded) {
+                Text(
+                    "Precedence: app split tunnel -> explicit block rules -> regional bypass direct rules -> explicit direct/proxy rules -> routing default.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFF4E5E56),
+                )
+                OutlinedTextField(
+                    value = customDirectDomainDraft,
+                    onValueChange = onCustomDirectDomainDraftChange,
+                    label = { Text("Always direct domain") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                ActionGroup {
+                    ActionButton(
+                        text = "Add Direct Domain",
+                        onClick = onAddCustomDirectDomain,
+                        modifier = Modifier.testTag(UiTags.ADD_DIRECT_DOMAIN_BUTTON),
+                    )
+                }
+                if (customDirectDomains.isNotEmpty()) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        customDirectDomains.forEach { domain ->
+                            RemovableChip(
+                                text = domain,
+                                onRemove = { onRemoveCustomDirectDomain(domain) },
+                            )
+                        }
+                    }
+                }
+                PreviewCard(
+                    state = state,
+                    onPackageChange = onPackageChange,
+                    onHostChange = onHostChange,
+                    onIpChange = onIpChange,
+                    onPortChange = onPortChange,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun HeroCard(
     title: String,
     subtitle: String,
@@ -692,6 +881,32 @@ private fun TwoColumnMetricRow(
 }
 
 @Composable
+private fun RemovableChip(
+    text: String,
+    onRemove: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color = Color(0xFFFAF7F1),
+        contentColor = Color(0xFF183233),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            TextButton(onClick = onRemove) {
+                Text("Remove")
+            }
+        }
+    }
+}
+
+@Composable
 private fun MetricCard(
     title: String,
     value: String,
@@ -743,6 +958,7 @@ private fun PreviewCard(
     state: MainUiState,
     onPackageChange: (String) -> Unit,
     onHostChange: (String) -> Unit,
+    onIpChange: (String) -> Unit,
     onPortChange: (String) -> Unit,
 ) {
     Card(
@@ -771,6 +987,13 @@ private fun PreviewCard(
                 singleLine = true,
             )
             OutlinedTextField(
+                value = state.routePreview.destinationIp,
+                onValueChange = onIpChange,
+                label = { Text("Destination IP") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            OutlinedTextField(
                 value = state.routePreview.destinationPort,
                 onValueChange = onPortChange,
                 label = { Text("Destination port") },
@@ -786,6 +1009,13 @@ private fun PreviewCard(
                 text = state.previewOutcome.reason,
                 style = MaterialTheme.typography.bodyMedium,
             )
+            state.previewOutcome.runtimeDatasetHint?.let { hint ->
+                Text(
+                    text = hint,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFF5B4A32),
+                )
+            }
         }
     }
 }
