@@ -1,6 +1,9 @@
 package io.acionyx.tunguska.app
 
 import android.app.Application
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.net.VpnService
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -36,6 +39,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val bootstrapProfile = defaultBootstrapProfile()
     private val defaultPreview = PreviewInputs()
     private val profileRepository = SecureProfileRepository(application)
+    private val automationRepository = AutomationIntegrationRepository(application)
     private val regionalBypassPromptStore = RegionalBypassPromptStore(application)
     private val exportRepository = SecureExportRepository(application)
     private val subscriptionRepository = SecureSubscriptionRepository(application)
@@ -43,14 +47,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val subscriptionNotificationPublisher = SubscriptionNotificationPublisher(application)
     private val backgroundExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val runtimeAutomationOrchestrator = RuntimeAutomationOrchestrator(
+        context = application,
+        profileRepository = profileRepository,
+    )
     private val runtimeClient = VpnRuntimeClient(
         context = application,
         onConnectionChanged = { connected ->
             uiState = uiState.copy(controlChannelConnected = connected)
-            if (connected && pendingRuntimeConnect) {
-                pendingRuntimeConnect = false
-                stageAndStartRuntime()
-            }
         },
         onStatus = { snapshot, error ->
             Log.i(
@@ -72,13 +76,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var subscriptionEventLog: SubscriptionEventLog = SubscriptionEventLog()
     private var subscriptionNotificationLedger: SubscriptionNotificationLedger = SubscriptionNotificationLedger()
     private var pendingImportedProfile: ImportedProfile? = null
-    private var pendingRuntimeConnect: Boolean = false
 
     var uiState: MainUiState by mutableStateOf(initialState())
         private set
 
     init {
         refreshSubscriptionNotificationStatus()
+        loadAutomationIntegration()
         loadEncryptedProfile()
         loadSubscriptionConfig()
         runtimeClient.bind()
@@ -104,6 +108,93 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun markVpnPermissionGranted() {
         uiState = uiState.copy(vpnPermissionGranted = true)
+        refreshAutomationIntegrationStatus()
+    }
+
+    fun setAutomationEnabled(enabled: Boolean) {
+        runCatching {
+            if (enabled) {
+                automationRepository.enable()
+            } else {
+                automationRepository.disable()
+            }
+        }.onSuccess { settings ->
+            applyAutomationSettings(
+                settings = settings,
+                status = if (enabled) {
+                    "Enabled Anubis automation and generated a token."
+                } else {
+                    "Disabled Anubis automation and invalidated the token."
+                },
+            )
+        }.onFailure { error ->
+            uiState = uiState.copy(
+                automationState = uiState.automationState.copy(
+                    status = null,
+                    error = error.message ?: error.javaClass.simpleName,
+                ),
+            )
+        }
+    }
+
+    fun rotateAutomationToken() {
+        runCatching { automationRepository.rotateToken() }
+            .onSuccess { settings ->
+                applyAutomationSettings(
+                    settings = settings,
+                    status = "Rotated the Anubis automation token.",
+                )
+            }
+            .onFailure { error ->
+                uiState = uiState.copy(
+                    automationState = uiState.automationState.copy(
+                        status = null,
+                        error = error.message ?: error.javaClass.simpleName,
+                    ),
+                )
+            }
+    }
+
+    fun copyAutomationToken() {
+        val token = uiState.automationState.rawToken
+        if (token.isNullOrBlank()) {
+            uiState = uiState.copy(
+                automationState = uiState.automationState.copy(
+                    status = null,
+                    error = "Enable Anubis automation before copying the token.",
+                ),
+            )
+            return
+        }
+        val clipboardManager = getApplication<Application>()
+            .getSystemService(ClipboardManager::class.java)
+        clipboardManager?.setPrimaryClip(
+            ClipData.newPlainText("Tunguska Anubis token", token),
+        )
+        uiState = uiState.copy(
+            automationState = uiState.automationState.copy(
+                status = "Copied the Anubis automation token to the clipboard.",
+                error = null,
+            ),
+        )
+    }
+
+    fun refreshAutomationIntegrationStatus() {
+        runCatching { automationRepository.load() }
+            .onSuccess { settings ->
+                applyAutomationSettings(
+                    settings = settings,
+                    status = uiState.automationState.status,
+                )
+            }
+            .onFailure { error ->
+                uiState = uiState.copy(
+                    automationState = uiState.automationState.copy(
+                        status = null,
+                        error = error.message ?: error.javaClass.simpleName,
+                    ),
+                )
+            }
     }
 
     fun setRussiaDirectEnabled(enabled: Boolean) {
@@ -998,24 +1089,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             uiState = uiState.copy(controlError = "Grant VpnService permission before connecting.")
             return
         }
-        if (uiState.runtimeSnapshot.phase == VpnRuntimePhase.START_REQUESTED) {
-            uiState = uiState.copy(controlError = null)
-            refreshRuntimeStatus()
-            return
+        uiState = uiState.copy(controlError = null)
+        backgroundExecutor.execute {
+            val result = runCatching {
+                runtimeAutomationOrchestrator.prepareProfile(uiState.profile)
+            }.fold(
+                onSuccess = { request ->
+                    runtimeAutomationOrchestrator.startPreparedRuntime(request)
+                },
+                onFailure = { error ->
+                    RuntimeAutomationResult(
+                        status = AutomationCommandStatus.PROFILE_INVALID,
+                        summary = "The current profile could not be prepared for runtime startup.",
+                        error = error.message ?: error.javaClass.simpleName,
+                    )
+                },
+            )
+            mainHandler.post {
+                uiState = uiState.copy(controlError = result.error)
+                refreshRuntimeStatus()
+            }
         }
-        if (uiState.runtimeSnapshot.phase == VpnRuntimePhase.RUNNING) {
-            uiState = uiState.copy(controlError = null)
-            refreshRuntimeStatus()
-            return
-        }
-        if (!uiState.controlChannelConnected) {
-            pendingRuntimeConnect = true
-            uiState = uiState.copy(controlError = "Connecting to the isolated runtime control service.")
-            runtimeClient.bind()
-            return
-        }
-        pendingRuntimeConnect = false
-        stageAndStartRuntime()
     }
 
     fun startRuntime() {
@@ -1023,12 +1117,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             uiState = uiState.copy(controlError = "Grant VpnService permission before requesting runtime start.")
             return
         }
-        stageAndStartRuntime()
+        connectRuntime()
     }
 
     fun stopRuntime() {
-        pendingRuntimeConnect = false
-        runtimeClient.stopRuntime()
+        backgroundExecutor.execute {
+            val result = runtimeAutomationOrchestrator.stopRuntime()
+            mainHandler.post {
+                uiState = uiState.copy(controlError = result.error)
+                refreshRuntimeStatus()
+            }
+        }
     }
 
     fun refreshRuntimeStatus() {
@@ -1111,6 +1210,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 tunnelPlanSummary = uiState.tunnelPlan.toSummary(),
                 runtimeSnapshot = uiState.runtimeSnapshot,
                 profileStorage = uiState.profileStorage,
+                automationState = uiState.automationState,
                 routePreview = uiState.routePreview,
                 previewOutcome = uiState.previewOutcome,
             )
@@ -1166,6 +1266,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 keyReference = exportRepository.keyReference,
                 status = "No encrypted export has been generated yet.",
             ),
+            automationState = AutomationState(
+                storagePath = automationRepository.storagePath,
+                keyReference = automationRepository.keyReference,
+                status = "Anubis automation is disabled by default.",
+                vpnPermissionReady = false,
+            ),
             subscriptionState = SubscriptionState(
                 storagePath = subscriptionRepository.storagePath,
                 pendingStoragePath = subscriptionRepository.pendingUpdateStoragePath,
@@ -1187,6 +1293,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             regionalBypassError = null,
             showRegionalBypassPrompt = false,
         )
+    }
+
+    private fun loadAutomationIntegration() {
+        runCatching { automationRepository.load() }
+            .onSuccess { settings ->
+                applyAutomationSettings(
+                    settings = settings,
+                    status = if (settings.enabled) {
+                        "Loaded encrypted Anubis automation settings."
+                    } else {
+                        "Anubis automation is disabled by default."
+                    },
+                )
+            }
+            .onFailure { error ->
+                uiState = uiState.copy(
+                    automationState = uiState.automationState.copy(
+                        status = null,
+                        error = error.message ?: error.javaClass.simpleName,
+                    ),
+                )
+            }
     }
 
     private fun loadEncryptedProfile() {
@@ -1439,6 +1567,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         pendingImportedProfile = null
     }
 
+    private fun applyAutomationSettings(
+        settings: AutomationIntegrationSettings,
+        status: String?,
+    ) {
+        uiState = uiState.copy(
+            automationState = uiState.automationState.copy(
+                enabled = settings.enabled,
+                rawToken = settings.token,
+                tokenPreview = settings.token?.let(::maskAutomationToken),
+                lastAutomationStatus = settings.lastAutomationStatus.name,
+                lastAutomationError = settings.lastAutomationError,
+                lastAutomationAt = settings.lastAutomationAtEpochMs?.formatTimestamp(),
+                lastCallerHint = settings.lastCallerHint,
+                vpnPermissionReady = VpnService.prepare(getApplication()) == null,
+                status = status,
+                error = null,
+            ),
+        )
+    }
+
     private fun stageAndStartRuntime() {
         runCatching {
             Log.i(
@@ -1545,6 +1693,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
 private const val TAG: String = "MainViewModel"
 
+private fun maskAutomationToken(token: String): String = when {
+    token.length <= 10 -> token
+    else -> "${token.take(6)}...${token.takeLast(4)}"
+}
+
 data class MainUiState(
     val profile: ProfileIr,
     val compiledConfig: CompiledEngineConfig,
@@ -1554,6 +1707,7 @@ data class MainUiState(
     val runtimeSnapshot: VpnRuntimeSnapshot,
     val profileStorage: ProfileStorageState,
     val exportState: ExportState,
+    val automationState: AutomationState,
     val subscriptionState: SubscriptionState,
     val importDraft: String = "",
     val importPreview: ImportPreviewState? = null,
@@ -1646,6 +1800,21 @@ data class ExportState(
     val lastArtifactHash: String? = null,
     val lastCreatedAt: String? = null,
     val lastRedacted: Boolean? = null,
+    val error: String? = null,
+)
+
+data class AutomationState(
+    val enabled: Boolean = false,
+    val rawToken: String? = null,
+    val tokenPreview: String? = null,
+    val storagePath: String,
+    val keyReference: String,
+    val vpnPermissionReady: Boolean,
+    val lastAutomationStatus: String = AutomationCommandStatus.NEVER_RUN.name,
+    val lastAutomationError: String? = null,
+    val lastAutomationAt: String? = null,
+    val lastCallerHint: String? = null,
+    val status: String? = null,
     val error: String? = null,
 )
 

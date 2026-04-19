@@ -372,11 +372,6 @@ private class XrayTun2SocksEmbeddedEngineSession(
             mtu.toString(),
             "-loglevel",
             "error",
-            "-tcp-sndbuf",
-            "524288",
-            "-tcp-rcvbuf",
-            "524288",
-            "-tcp-auto-tuning",
         )
         return VpnNativeProcessBridge.nativeStartProcessWithFd(
             cmd = binaries.tun2socks.absolutePath,
@@ -916,13 +911,15 @@ private data class XrayDnsPlan(
             DnsMode.SystemDns -> {
                 XrayDnsPlan(
                     xrayDns = buildJsonObject {
+                        put("hosts", buildJsonObject {})
                         put("servers", buildJsonArray {
-                            add(JsonPrimitive("localhost"))
+                            add(JsonPrimitive("tcp://1.1.1.1:53"))
+                            add(JsonPrimitive("tcp://1.0.0.1:53"))
                         })
-                        put("queryStrategy", "UseIP")
+                        put("queryStrategy", "UseIPv4")
                     },
                     vpnDnsServers = DEFAULT_VPN_DNS_SERVERS,
-                    proxyDns = false,
+                    proxyDns = true,
                 )
             }
 

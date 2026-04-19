@@ -165,7 +165,7 @@ class RoutePreviewEngine {
                 normalizedHost == suffix || normalizedHost.endsWith(".$suffix")
             }
             if (!suffixMatched) {
-                return "Regional bypass can still apply at runtime via geosite:ru even when the host does not end in .ru/.su/.рф."
+                return "Regional bypass can still apply at runtime if the resolved destination IP is classified as geoip:ru."
             }
         }
         return null

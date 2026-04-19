@@ -97,6 +97,34 @@ class XrayCompatConfigCompilerTest {
     }
 
     @Test
+    fun `system dns uses built-in tcp resolvers and dns outbound interception`() {
+        val compiled = XrayCompatConfigCompiler.compile(
+            profile = sampleProfile().copy(dns = DnsMode.SystemDns),
+            bridge = AuthenticatedLocalBridge(
+                port = 25001,
+                user = "bridge-user",
+                password = "bridge-pass",
+            ),
+        )
+
+        val root = Json.parseToJsonElement(compiled.json).jsonObject
+        val dns = root.getValue("dns").jsonObject
+        val servers = dns.getValue("servers").jsonArray.map { it.jsonPrimitive.content }
+        val rules = root.getValue("routing").jsonObject.getValue("rules").jsonArray
+
+        assertEquals(listOf("tcp://1.1.1.1:53", "tcp://1.0.0.1:53"), servers)
+        assertEquals("UseIPv4", dns.getValue("queryStrategy").jsonPrimitive.content)
+        assertTrue(
+            rules.any { rule ->
+                val json = rule.jsonObject
+                json["outboundTag"]?.jsonPrimitive?.content == "dns-out" &&
+                    json["port"]?.jsonPrimitive?.content == "53" &&
+                    json["network"]?.jsonPrimitive?.content == "udp,tcp"
+            },
+        )
+    }
+
+    @Test
     fun `compiler emits regional bypass rules before general proxy routing`() {
         val compiled = XrayCompatConfigCompiler.compile(
             profile = sampleProfile().copy(
@@ -115,8 +143,11 @@ class XrayCompatConfigCompilerTest {
         val routing = root.getValue("routing").jsonObject
         val rules = routing.getValue("rules").jsonArray
         val regionalRuleIndex = rules.indexOfFirst { rule ->
-            val domain = rule.jsonObject["domain"]?.jsonArray ?: return@indexOfFirst false
-            domain.any { it.jsonPrimitive.content == "geosite:ru" }
+            val json = rule.jsonObject
+            val domain = json["domain"]?.jsonArray.orEmpty()
+            val ip = json["ip"]?.jsonArray.orEmpty()
+            domain.any { it.jsonPrimitive.content == "domain:xn--p1ai" } &&
+                ip.any { it.jsonPrimitive.content == "geoip:ru" }
         }
         val defaultProxyIndex = rules.indexOfFirst { rule ->
             rule.jsonObject["outboundTag"]?.jsonPrimitive?.content == "proxy" &&

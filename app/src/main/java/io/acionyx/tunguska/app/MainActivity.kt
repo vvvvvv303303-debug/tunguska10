@@ -53,6 +53,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.acionyx.tunguska.domain.RegionalBypassPresetId
 import io.acionyx.tunguska.domain.normalizeDomainForRouting
@@ -118,6 +119,11 @@ private fun TunguskaApp(
             showFrozenSecondarySurface = true
             subscriptionBringIntoViewRequester.bringIntoView()
         }
+    }
+    LifecycleResumeEffect(Unit) {
+        viewModel.refreshRuntimeStatus()
+        viewModel.refreshAutomationIntegrationStatus()
+        onPauseOrDispose { }
     }
 
     MaterialTheme(
@@ -244,6 +250,14 @@ private fun TunguskaApp(
                                 ActionButton(text = "Redacted Audit", onClick = { viewModel.buildDiagnosticBundle() })
                             }
                         },
+                    )
+
+                    AutomationIntegrationCard(
+                        state = state.automationState,
+                        onToggleEnabled = viewModel::setAutomationEnabled,
+                        onRotateToken = viewModel::rotateAutomationToken,
+                        onCopyToken = viewModel::copyAutomationToken,
+                        onRefresh = viewModel::refreshAutomationIntegrationStatus,
                     )
 
                     DetailCard(
@@ -592,7 +606,7 @@ private fun RegionalBypassCard(
             Text("Regional Bypass", style = MaterialTheme.typography.titleLarge)
             Text(
                 text = if (russiaDirectEnabled) {
-                    "Russia direct is on. .ru, .su, .рф, Russian domains from geosite:ru, and geoip:ru destinations bypass the VPN."
+                    "Russia direct is on. Russian .ru, .su, and .рф destinations, plus Russian IP ranges, bypass the VPN."
                 } else {
                     "Russia direct is off. Russian destinations follow the normal VPN routing policy."
                 },
@@ -619,7 +633,7 @@ private fun RegionalBypassCard(
                     ) {
                         Text("Russia direct", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            ".ru, .su, .рф and Russian destinations stay outside the tunnel.",
+                            ".ru, .su, .рф, and Russian IP destinations stay outside the tunnel.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color(0xFF4E5E56),
                         )
@@ -647,7 +661,7 @@ private fun RegionalBypassCard(
                             style = MaterialTheme.typography.titleMedium,
                         )
                         Text(
-                            "This keeps .ru, .su, .рф and Russian geosite/geoip destinations outside the VPN by default.",
+                            "This keeps .ru, .su, .рф, and Russian IP destinations outside the VPN by default.",
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         ActionGroup {
@@ -949,6 +963,117 @@ private fun DetailCard(
                 Text(line, style = MaterialTheme.typography.bodyMedium, color = Color(0xFF22332C))
             }
             actions?.invoke()
+        }
+    }
+}
+
+@Composable
+private fun AutomationIntegrationCard(
+    state: AutomationState,
+    onToggleEnabled: (Boolean) -> Unit,
+    onRotateToken: () -> Unit,
+    onCopyToken: () -> Unit,
+    onRefresh: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFF4EEE5)),
+        shape = RoundedCornerShape(24.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE0D5C6)),
+    ) {
+        Column(
+            modifier = Modifier.padding(if (rememberCompactLayout()) 16.dp else 20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("Anubis Integration", style = MaterialTheme.typography.titleLarge)
+            if (rememberCompactLayout()) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Enable automation", style = MaterialTheme.typography.labelMedium, color = Color(0xFF5D6C63))
+                    Switch(
+                        checked = state.enabled,
+                        onCheckedChange = onToggleEnabled,
+                        modifier = Modifier.testTag(UiTags.AUTOMATION_ENABLE_SWITCH),
+                    )
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text("Enable Anubis automation", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Opt-in explicit activity API with a rotatable token. Grant VPN permission once manually before using Anubis.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color(0xFF4E5E56),
+                        )
+                    }
+                    Switch(
+                        checked = state.enabled,
+                        onCheckedChange = onToggleEnabled,
+                        modifier = Modifier.testTag(UiTags.AUTOMATION_ENABLE_SWITCH),
+                    )
+                }
+            }
+            Text(
+                "VPN permission: ${if (state.vpnPermissionReady) "granted" else "required"}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color(0xFF22332C),
+            )
+            Text(
+                "Token: ${state.tokenPreview ?: "not generated"}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color(0xFF22332C),
+            )
+            Text(
+                "Last automation result: ${state.lastAutomationStatus}${state.lastAutomationAt?.let { " at $it" } ?: ""}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color(0xFF22332C),
+            )
+            state.lastAutomationError?.let { error ->
+                Text(
+                    "Last automation error: $error",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFF9C3B27),
+                )
+            }
+            state.lastCallerHint?.let { callerHint ->
+                Text(
+                    "Last caller hint: $callerHint",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFF5B4A32),
+                )
+            }
+            state.status?.let { status ->
+                Text(status, style = MaterialTheme.typography.bodyMedium, color = Color(0xFF214345))
+            }
+            state.error?.let { error ->
+                Text(error, style = MaterialTheme.typography.bodyMedium, color = Color(0xFF9C3B27))
+            }
+            ActionGroup {
+                ActionButton(
+                    text = "Rotate Token",
+                    onClick = onRotateToken,
+                    enabled = state.enabled,
+                    modifier = Modifier.testTag(UiTags.AUTOMATION_ROTATE_TOKEN_BUTTON),
+                )
+                ActionButton(
+                    text = "Copy Token",
+                    onClick = onCopyToken,
+                    enabled = state.enabled && state.rawToken != null,
+                    primary = false,
+                    modifier = Modifier.testTag(UiTags.AUTOMATION_COPY_TOKEN_BUTTON),
+                )
+                ActionButton(
+                    text = "Refresh",
+                    onClick = onRefresh,
+                    primary = false,
+                    modifier = Modifier.testTag(UiTags.AUTOMATION_REFRESH_BUTTON),
+                )
+            }
         }
     }
 }

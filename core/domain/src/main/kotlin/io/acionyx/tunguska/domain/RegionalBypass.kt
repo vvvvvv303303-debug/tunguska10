@@ -118,7 +118,6 @@ internal object RegionalBypassPresetRegistry {
             action = RouteAction.DIRECT,
             match = RouteMatch(
                 domainSuffix = listOf("ru", "su", "xn--p1ai"),
-                geoSites = listOf("ru"),
                 geoIps = listOf("ru"),
             ),
         )

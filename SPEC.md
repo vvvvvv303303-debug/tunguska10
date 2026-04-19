@@ -18,6 +18,7 @@ Tunguska is an Android VPN client for VLESS + REALITY profiles that prioritizes:
 - encrypted local state
 - fail-closed runtime behavior
 - explicit rejection of exploitable local proxy surfaces
+- optional token-gated external automation for orchestrators such as Anubis
 
 ## Supported Scope
 
@@ -56,7 +57,7 @@ The supported routing model combines:
 The shipping preset is `RU First`.
 
 - new and newly imported profiles default to `RU+`
-- `RU+` expands to `.ru`, `.su`, `.рф` / `xn--p1ai`, `geosite:ru`, and `geoip:ru`
+- `RU+` expands to `.ru`, `.su`, `.рф` / `xn--p1ai`, and `geoip:ru`
 - existing stored profiles are not silently rewritten; the app asks once whether to enable the preset
 
 ### Primary User Flow
@@ -71,12 +72,20 @@ The primary product flow is:
 6. stop cleanly
 7. optionally export encrypted backup or redacted diagnostics
 
+An advanced secondary flow also exists:
+
+1. enable automation explicitly
+2. rotate or copy the current integration token
+3. let an external orchestrator request `START` or `STOP`
+4. keep all runtime actions on the same stored profile and Binder-backed runtime path
+
 ## Runtime Specification
 
 ### Process model
 
 - `:app` process handles UI, storage, import, route preview, and exports
 - `:vpnservice` process owns `VpnService`, Binder control, runtime session, listener audit, and watchdog
+- an exported no-UI automation relay activity may request start or stop, but it does not expose the runtime control service directly
 
 ### Active runtime lane
 
@@ -125,6 +134,7 @@ Required properties:
 ### Runtime hardening
 
 - Binder is the intended app-to-runtime control plane
+- the only supported external automation bridge is an explicit token-gated activity
 - runtime listener self-audit must run against the current UID
 - only the expected authenticated loopback bridge may be allowed as a local listener in the active lane
 - watchdog failure must stop the runtime and tear down the VPN
@@ -134,6 +144,7 @@ Required properties:
 - profile storage must be encrypted
 - export artifacts must be encrypted
 - redacted diagnostic bundles must avoid raw secret leakage by default
+- automation state may be exported only in redacted form; automation tokens must never be exported
 
 ## Explicit Non-Goals
 
@@ -162,12 +173,13 @@ The release line is considered materially correct when:
 - import by camera QR works
 - import by image QR works
 - VPN permission flow works
-- Chrome or another routed client shows a different public IP under VPN than without VPN
+- a real routed client on a physical device shows a different public IP under VPN than without VPN
 - the default `RU+` preset keeps Russian destinations direct
 - a non-RU public-IP endpoint still goes through the VPN
 - stopping the VPN returns the client to the direct IP
 - split routing behaves as configured
 - listener self-audit and watchdog fail closed on violation
+- token-gated automation may start and stop the current stored profile without exposing an unauthenticated control surface
 - GitHub Actions build installable APK artifacts and GitHub Releases publish versioned APKs
 
 The stronger security claim still depends on the real-device detector matrix in [docs/mvp-device-validation.md](./docs/mvp-device-validation.md).

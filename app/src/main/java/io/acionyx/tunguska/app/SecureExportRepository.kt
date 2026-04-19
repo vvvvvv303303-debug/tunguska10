@@ -67,6 +67,7 @@ class SecureExportRepository(
         tunnelPlanSummary: TunnelPlanSummary,
         runtimeSnapshot: VpnRuntimeSnapshot,
         profileStorage: ProfileStorageState,
+        automationState: AutomationState,
         routePreview: PreviewInputs,
         previewOutcome: RoutePreviewOutcome,
     ): ExportArtifactRecord {
@@ -80,6 +81,7 @@ class SecureExportRepository(
             profile = profile.toRedactedReport(),
             runtime = runtimeSnapshot.toRedactedReport(),
             storage = profileStorage.toRedactedReport(),
+            automation = automationState.toRedactedReport(),
             tunnelPlan = tunnelPlanSummary,
             routePreview = RedactedRoutePreviewReport(
                 packageHash = routePreview.packageName.takeIf { it.isNotBlank() }?.redactedDigest(),
@@ -190,6 +192,7 @@ private data class DiagnosticBundlePayload(
     val profile: RedactedProfileReport,
     val runtime: RedactedRuntimeReport,
     val storage: RedactedStorageReport,
+    val automation: RedactedAutomationReport,
     val tunnelPlan: TunnelPlanSummary,
     val routePreview: RedactedRoutePreviewReport,
 )
@@ -268,6 +271,18 @@ private data class RedactedStorageReport(
     val lastPersistedAt: String?,
     val status: String,
     val error: String?,
+)
+
+@Serializable
+private data class RedactedAutomationReport(
+    val enabled: Boolean,
+    val vpnPermissionReady: Boolean,
+    val lastAutomationStatus: String,
+    val lastAutomationError: String?,
+    val lastAutomationAt: String?,
+    val lastCallerHint: String?,
+    val storagePathHash: String,
+    val keyReference: String,
 )
 
 @Serializable
@@ -370,6 +385,17 @@ private fun ProfileStorageState.toRedactedReport(): RedactedStorageReport = Reda
     lastPersistedAt = lastPersistedAt,
     status = status,
     error = error,
+)
+
+private fun AutomationState.toRedactedReport(): RedactedAutomationReport = RedactedAutomationReport(
+    enabled = enabled,
+    vpnPermissionReady = vpnPermissionReady,
+    lastAutomationStatus = lastAutomationStatus,
+    lastAutomationError = lastAutomationError,
+    lastAutomationAt = lastAutomationAt,
+    lastCallerHint = lastCallerHint,
+    storagePathHash = storagePath.redactedDigest(),
+    keyReference = keyReference,
 )
 
 private fun String.redactedDigest(): String = "sha256:${CanonicalJson.sha256Hex(this).take(16)}:$length"

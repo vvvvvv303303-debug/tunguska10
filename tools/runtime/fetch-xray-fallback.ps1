@@ -16,11 +16,10 @@ New-Item -ItemType Directory -Force -Path $xrayAssetsRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $tmpRoot | Out-Null
 
 function Get-XrayAssetName([string]$abi) {
-    # The Linux Xray binaries run correctly inside the Android app sandbox in the
-    # current MVP lane. Recent upstream reports show the Android-flavoured builds
-    # can reach RUNNING while failing to carry real traffic on Android devices.
+    # Keep the arm64 device lane on the Linux build that carries traffic on real
+    # phones, but prefer the Android x86_64 build for emulator validation.
     switch ($abi) {
-        "x86_64" { return "Xray-linux-64.zip" }
+        "x86_64" { return "Xray-android-amd64.zip" }
         "arm64-v8a" { return "Xray-linux-arm64-v8a.zip" }
         default { throw "Unsupported ABI for xray: $abi" }
     }

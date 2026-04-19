@@ -15,6 +15,7 @@ Tunguska currently focuses on one path:
 - obtain Android VPN permission
 - connect, monitor runtime health, and stop cleanly
 - export encrypted backup or redacted diagnostics when needed
+- optionally expose a token-gated automation bridge for external orchestrators such as Anubis
 
 The app contains subscription and notification code from earlier iterations, but that surface is frozen and secondary. It is not the primary product path.
 
@@ -88,12 +89,13 @@ Tunguska does not treat `RUNNING` as success on its own.
 
 Current proof for `v0.2.1`:
 
-- headed emulator smoke imports a real VLESS + REALITY share link
-- the Android VPN permission dialog is completed through UI Automator
-- Chrome shows one public IP without VPN and a different public IP with VPN enabled
-- stopping the VPN returns Chrome to the direct IP
-- a separate helper app proves full-tunnel, allowlist, and denylist behavior
-- real-device testing has already confirmed live tunnel traffic instead of a zero-byte fake connect
+- a headed emulator harness covers import, connect, stop, automation control-path, screenshot capture, UI hierarchy capture, and filtered diagnostics
+- the Android VPN permission dialog is completed through UI Automator in the local harness
+- a separate helper app proves full-tunnel, allowlist, and denylist behavior in the local test rig
+- a separate headed-emulator Anubis harness proves `freeze -> start Tunguska -> VPN up -> routed app IP changes -> stop -> direct IP restored -> refreeze`
+- real-device testing has already confirmed both live tunnel traffic and a different public IP with VPN enabled than without VPN
+
+The emulator remains useful for UI and orchestration debugging, but the authoritative dataplane proof is still a real device.
 
 ## Split Routing
 
@@ -120,7 +122,6 @@ The default `RU+` preset expands to:
 - `.ru`
 - `.su`
 - `.рф` / `xn--p1ai`
-- `geosite:ru`
 - `geoip:ru`
 
 Rule precedence is fixed:
@@ -148,7 +149,7 @@ The advanced area adds:
 - a route preview for host or IP input
 - a short explanation of precedence
 
-When a result depends on runtime geodata rather than a plain hostname suffix, the preview shows an explicit runtime hint instead of pretending it has already resolved `geosite` or `geoip`.
+When a result depends on runtime geodata rather than a plain hostname suffix, the preview shows an explicit runtime hint instead of pretending it has already resolved destination IP classification ahead of time.
 
 ## DNS Behavior
 
@@ -204,6 +205,37 @@ Regional bypass state is included in redacted form:
 - generated regional-rule count
 - route-preview runtime dataset hints
 
+Automation state is also included in redacted form:
+
+- whether external automation is enabled
+- whether `VpnService` permission is already satisfied
+- last automation status and error
+- last caller hint
+- encrypted storage location hash
+
+The automation token itself is not exported.
+
+## Automation Integration
+
+Tunguska also exposes an opt-in automation path intended for orchestrators such as Anubis.
+
+- the API is disabled by default
+- the entrypoint is an explicit exported activity, not an open broadcast receiver
+- every request requires the current automation token
+- the token is rotatable and stored in encrypted app-private storage
+- the token is not written into diagnostic exports
+- the app must already have Android VPN permission before external automation can start the runtime
+
+Operationally, the automation bridge always uses the current sealed Tunguska profile. It does not introduce a second profile slot or a separate runtime configuration path.
+
+The current shell contract is:
+
+- `io.acionyx.tunguska.action.AUTOMATION_START`
+- `io.acionyx.tunguska.action.AUTOMATION_STOP`
+- required extra: `automation_token`
+
+Detailed setup notes are in [docs/anubis-integration.md](./docs/anubis-integration.md).
+
 ## Security Properties
 
 Current security properties in the shipped code:
@@ -212,6 +244,8 @@ Current security properties in the shipped code:
 - no cleartext traffic allowed by app network policy
 - no unauthenticated localhost proxy in the active runtime lane
 - no enabled Xray or sing-box management API in the active runtime lane
+- no open broadcast control surface for external automation
+- exported automation control is opt-in and token-gated
 - no deep-link import path enabled by default
 - no release-path claim of VPN invisibility
 - no silent migration of existing stored profiles into `RU direct`
@@ -259,4 +293,5 @@ Local sideload package helper:
 - [PRIVACY.md](./PRIVACY.md): privacy and local data handling
 - [SECURITY.md](./SECURITY.md): vulnerability reporting policy
 - [docs/mvp-device-validation.md](./docs/mvp-device-validation.md): detector and real-device validation matrix
+- [docs/anubis-integration.md](./docs/anubis-integration.md): token-gated automation setup for Anubis-style orchestration
 - [docs/release-process.md](./docs/release-process.md): versioning and GitHub Release process

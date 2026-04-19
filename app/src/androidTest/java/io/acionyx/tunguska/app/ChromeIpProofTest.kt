@@ -17,6 +17,7 @@ class ChromeIpProofTest {
 
     @Test
     fun chrome_shows_different_ip_with_and_without_vpn() {
+        harness.ensureRuntimeIdle()
         val directIp = harness.openChromeAndReadIp("direct")
         harness.launchTunguska()
         harness.importShareLinkFromArgsOrDefault()

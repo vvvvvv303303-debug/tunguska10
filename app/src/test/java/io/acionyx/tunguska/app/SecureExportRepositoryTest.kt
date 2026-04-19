@@ -61,6 +61,11 @@ class SecureExportRepositoryTest {
                 status = "Loaded encrypted profile.",
                 persistedProfileHash = profile.canonicalHash(),
             ),
+            automationState = AutomationState(
+                storagePath = "C:/private/automation.json.enc",
+                keyReference = "android-keystore:test-automation",
+                vpnPermissionReady = true,
+            ),
             routePreview = PreviewInputs(
                 packageName = "io.acionyx.browser",
                 destinationHost = "login.corp.example",

@@ -6,7 +6,7 @@ import kotlin.test.assertTrue
 
 class RegionalBypassResolverTest {
     @Test
-    fun `russia preset expands to direct suffix geosite and geoip rules`() {
+    fun `russia preset expands to direct suffix and geoip rules`() {
         val profile = sampleProfile(
             routing = RoutingPolicy(
                 regionalBypass = defaultRegionalBypass(),
@@ -18,7 +18,6 @@ class RegionalBypassResolverTest {
 
         assertEquals(RouteAction.DIRECT, russiaRule.action)
         assertEquals(listOf("ru", "su", "xn--p1ai"), russiaRule.match.domainSuffix)
-        assertEquals(listOf("ru"), russiaRule.match.geoSites)
         assertEquals(listOf("ru"), russiaRule.match.geoIps)
     }
 

@@ -18,4 +18,8 @@ object UiTags {
     const val ADD_DIRECT_DOMAIN_BUTTON = "add_direct_domain_button"
     const val ACCEPT_RUSSIA_DIRECT_PROMPT_BUTTON = "accept_russia_direct_prompt_button"
     const val DECLINE_RUSSIA_DIRECT_PROMPT_BUTTON = "decline_russia_direct_prompt_button"
+    const val AUTOMATION_ENABLE_SWITCH = "automation_enable_switch"
+    const val AUTOMATION_ROTATE_TOKEN_BUTTON = "automation_rotate_token_button"
+    const val AUTOMATION_COPY_TOKEN_BUTTON = "automation_copy_token_button"
+    const val AUTOMATION_REFRESH_BUTTON = "automation_refresh_button"
 }

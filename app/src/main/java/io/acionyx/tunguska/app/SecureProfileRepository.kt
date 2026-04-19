@@ -6,15 +6,24 @@ import io.acionyx.tunguska.domain.DnsMode
 import io.acionyx.tunguska.domain.ProfileIr
 import io.acionyx.tunguska.storage.EncryptedProfileStore
 import io.acionyx.tunguska.storage.StoredProfile
+import java.nio.file.Path
 
 private const val PROFILE_MASTER_KEY_ALIAS: String = "io.acionyx.tunguska.profile.master"
 private const val PROFILE_STORE_RELATIVE_PATH: String = "profiles/default-profile.json.enc"
 
 class SecureProfileRepository(
-    context: Context,
-    cipherBox: CipherBox = AndroidKeyStoreCipherBox(PROFILE_MASTER_KEY_ALIAS),
+    path: Path,
+    cipherBox: CipherBox,
 ) {
     private val store = EncryptedProfileStore(
+        path = path,
+        cipherBox = cipherBox,
+    )
+
+    constructor(
+        context: Context,
+        cipherBox: CipherBox = AndroidKeyStoreCipherBox(PROFILE_MASTER_KEY_ALIAS),
+    ) : this(
         path = context.filesDir.toPath().resolve(PROFILE_STORE_RELATIVE_PATH),
         cipherBox = cipherBox,
     )

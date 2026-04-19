@@ -1,4 +1,9 @@
 <resources>
     <string name="app_name">Tunguska</string>
+    <string name="automation_notification_channel_name">Automation Relay</string>
+    <string name="automation_notification_channel_description">Short-lived automation requests from Anubis.</string>
+    <string name="automation_notification_title">Tunguska automation</string>
+    <string name="automation_notification_start_text">Starting the isolated VPN runtime.</string>
+    <string name="automation_notification_stop_text">Stopping the isolated VPN runtime.</string>
+    <string name="automation_notification_generic_text">Processing an external automation request.</string>
 </resources>
-

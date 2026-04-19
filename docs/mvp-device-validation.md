@@ -5,8 +5,9 @@ This document defines the real-device validation matrix for Tunguska `v0.2.x`.
 ## Current Status
 
 - Release exists: `v0.2.1`
-- Headed emulator smoke proves import, connect, Chrome public-IP change, stop, and split-routing parity with a helper app
-- Functional real-device traffic has been confirmed
+- Headed emulator harness covers import, connect, stop, automation control-path, split-routing helper flows, and artifact capture
+- Headed emulator joint Tunguska + Anubis orchestration has been proven end-to-end with a real VLESS + REALITY share link passed through CLI or environment, not committed into the repo
+- Functional real-device traffic and public-IP change have been confirmed
 - Full detector-backed validation on a physical device is still pending
 
 ## Active Runtime Under Test
@@ -67,9 +68,23 @@ Helper scripts:
 14. Run a Termux-style excluded-app public-IP check and capture whether tunnel egress can be reproduced.
 15. Export a redacted diagnostic bundle and attach it to the validation report.
 
+## Automation And Anubis Validation
+
+If external orchestration is in scope, validate it separately after the standalone Tunguska path is already green.
+
+1. Enable automation in Tunguska and copy the current token.
+2. Confirm Tunguska still rejects invalid-token and disabled-integration requests.
+3. Configure Anubis with the Tunguska package and token.
+4. Confirm Anubis unfreezes Tunguska before `START`.
+5. Confirm Anubis re-freezes Tunguska after confirmed `STOP`.
+6. Confirm a real device still shows different public IPs before and after the orchestrated VPN startup.
+7. Confirm stopping through Anubis returns the device to the direct IP.
+8. Keep the real VLESS test fixture outside git and pass it through CLI or `TUNGUSKA_REAL_SHARE_LINK`.
+
 ## Acceptance Notes
 
 - The product does not claim VPN invisibility.
 - The product does claim that bypass-grade local attack surfaces are the real blocker.
+- The headed emulator is useful for UI and control-path debugging, but the authoritative IP proof remains a physical-device check.
 - If `xray+tun2socks` passes this matrix, it remains the primary runtime for the next release line.
 - If `libbox` later proves materially better on the same matrix, it can replace the active lane without changing profile storage or Binder contracts.

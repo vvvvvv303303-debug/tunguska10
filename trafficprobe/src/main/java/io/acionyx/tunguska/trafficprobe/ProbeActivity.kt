@@ -1,6 +1,7 @@
 package io.acionyx.tunguska.trafficprobe
 
 import android.app.Activity
+import android.content.Intent
 import android.os.Bundle
 import android.text.method.ScrollingMovementMethod
 import android.view.Gravity
@@ -20,7 +21,7 @@ class ProbeActivity : Activity() {
         super.onCreate(savedInstanceState)
         setContentView(buildContentView())
         updateEndpointText()
-        if (intent.getBooleanExtra(EXTRA_AUTO_PROBE, false)) {
+        if (shouldAutoProbe(intent)) {
             startProbe()
         }
     }
@@ -29,9 +30,19 @@ class ProbeActivity : Activity() {
         super.onNewIntent(intent)
         setIntent(intent)
         updateEndpointText()
-        if (intent?.getBooleanExtra(EXTRA_AUTO_PROBE, false) == true) {
+        if (shouldAutoProbe(intent)) {
             startProbe()
         }
+    }
+
+    private fun shouldAutoProbe(intent: Intent?): Boolean {
+        if (intent == null) {
+            return false
+        }
+        if (intent.hasExtra(EXTRA_AUTO_PROBE)) {
+            return intent.getBooleanExtra(EXTRA_AUTO_PROBE, false)
+        }
+        return intent.action == Intent.ACTION_MAIN
     }
 
     private fun buildContentView(): LinearLayout {
@@ -107,8 +118,8 @@ class ProbeActivity : Activity() {
 
     private fun fetchPublicIp(endpoint: String): String {
         val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 12_000
-            readTimeout = 12_000
+            connectTimeout = 8_000
+            readTimeout = 8_000
             requestMethod = "GET"
             instanceFollowRedirects = true
         }

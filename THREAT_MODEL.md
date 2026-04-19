@@ -56,6 +56,7 @@ Generic VPN visibility is not treated as a release blocker unless it also proves
 - `:app` process: UI, import, storage, route preview, export
 - `:vpnservice` process: `VpnService`, runtime engine, listener audit, watchdog
 - Binder: only intended app-to-runtime control channel
+- exported automation activity: opt-in token-gated bridge into the same internal control path
 - loopback: treated as hostile shared device surface unless explicitly authenticated and audited
 
 ## Implemented Controls
@@ -63,7 +64,8 @@ Generic VPN visibility is not treated as a release blocker unless it also proves
 ### Process isolation
 
 - The VPN runtime and Binder control service run in the isolated `:vpn` process.
-- Runtime control is not exposed through exported Android components.
+- The runtime control service itself is not exposed through exported Android components.
+- The only exported control bridge is a no-UI activity guarded by an explicit integration toggle and automation token.
 
 ### Import hardening
 
@@ -78,12 +80,21 @@ Generic VPN visibility is not treated as a release blocker unless it also proves
 - The bridge uses a per-session random port and credentials.
 - Management APIs and debug listeners are not enabled in the active lane.
 
+### Automation hardening
+
+- External orchestration is disabled by default.
+- The automation entrypoint is an explicit activity, not an open broadcast receiver.
+- Every request must carry the current automation token.
+- Token rotation invalidates the previous token immediately.
+- Automation uses the existing stored profile and internal Binder-backed runtime path.
+- Missing VPN permission is treated as an explicit automation failure, not as a background permission grab.
+
 ### Split routing
 
 - Split routing is enforced through `VpnService.Builder` package policy.
 - Full tunnel, allowlist, and denylist are modeled explicitly.
 - Regional bypass presets are compiled into deterministic direct rules before ordinary direct/proxy rules.
-- The shipping preset is `RU First`, covering `.ru`, `.su`, `.рф` / `xn--p1ai`, `geosite:ru`, and `geoip:ru`.
+- The shipping preset is `RU First`, covering `.ru`, `.su`, `.рф` / `xn--p1ai`, and `geoip:ru`.
 - Loopback preservation is treated as part of the routing contract.
 
 ### Listener self-audit
@@ -111,6 +122,7 @@ These risks are known and currently accepted or still under validation:
 
 - The active runtime still uses an internal authenticated loopback bridge instead of a pure no-loopback data plane.
 - The full detector matrix has not yet been completed on physical hardware, even though functional tunneled traffic has already been confirmed on a real phone.
+- The new automation bridge expands the app-process surface, even though it is opt-in and token-gated.
 - Server-side Xray blocking can only reject traffic that reaches the VPN server; it cannot catch traffic that the client intentionally routes direct.
 - Subscription and notification code still exists in the app process, even though it is not the primary product path.
 - The current public release is a sideload release, not a final store-distributed production channel.

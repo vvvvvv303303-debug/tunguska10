@@ -1,5 +1,7 @@
 package io.acionyx.tunguska.app
 
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -36,8 +38,12 @@ internal class VpnTestHarness(
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val device = UiDevice.getInstance(instrumentation)
     private val appContext = instrumentation.targetContext.applicationContext
+    private val connectivityManager =
+        appContext.getSystemService(ConnectivityManager::class.java)
     private val exportRepository = SecureExportRepository(appContext)
     private val profileRepository = SecureProfileRepository(appContext)
+    private val automationRepository = AutomationIntegrationRepository(appContext)
+    private val automationOrchestrator = RuntimeAutomationOrchestrator(appContext)
     private val plugin = SingboxEnginePlugin()
     private val routePreviewEngine = RoutePreviewEngine()
 
@@ -87,6 +93,11 @@ internal class VpnTestHarness(
         captureStep("post_connect")
     }
 
+    fun waitForRuntimePhaseVisible(expectedPhase: String) {
+        launchTunguska()
+        waitForRuntimePhase(expectedPhase)
+    }
+
     fun stopAndWaitForIdle() {
         if (!composeRule.onAllNodesWithTag(UiTags.STOP_BUTTON, useUnmergedTree = true).fetchSemanticsNodes().any()) {
             return
@@ -98,7 +109,78 @@ internal class VpnTestHarness(
         captureStep("post_stop")
     }
 
+    fun enableAutomationIntegrationViaUi(): String {
+        launchTunguska()
+        if (!automationRepository.load().enabled) {
+            composeRule.onNodeWithTag(UiTags.MAIN_SCROLL_COLUMN, useUnmergedTree = true)
+                .performScrollToNode(hasTestTag(UiTags.AUTOMATION_ENABLE_SWITCH))
+            composeRule.onNodeWithTag(UiTags.AUTOMATION_ENABLE_SWITCH, useUnmergedTree = true)
+                .performClick()
+            composeRule.waitUntil(timeoutMillis = 10_000) {
+                automationRepository.load().enabled
+            }
+        }
+        captureStep("automation_enabled")
+        return checkNotNull(automationRepository.load().token) {
+            "Automation token was not generated after enabling the integration."
+        }
+    }
+
+    fun writeAutomationTokenFixture(token: String) {
+        device.executeShellCommand("settings put global $AUTOMATION_TOKEN_SETTING $token")
+        val storedToken = device.executeShellCommand("settings get global $AUTOMATION_TOKEN_SETTING").trim()
+        assertTrue(
+            "Automation token fixture was not written to settings global $AUTOMATION_TOKEN_SETTING.",
+            storedToken == token,
+        )
+        captureStep("automation_token_written")
+    }
+
+    fun invokeAutomationStart(token: String, callerHint: String = "androidTest"): String {
+        val output = device.executeShellCommand(
+            "am start -W -n $AUTOMATION_COMPONENT " +
+                "-a ${AutomationRelayContract.ACTION_START} " +
+                "--es ${AutomationRelayContract.EXTRA_AUTOMATION_TOKEN} $token " +
+                "--es ${AutomationRelayContract.EXTRA_CALLER_HINT} $callerHint",
+        )
+        captureStep("automation_start_invoked")
+        return output
+    }
+
+    fun invokeAutomationStop(token: String, callerHint: String = "androidTest"): String {
+        val output = device.executeShellCommand(
+            "am start -W -n $AUTOMATION_COMPONENT " +
+                "-a ${AutomationRelayContract.ACTION_STOP} " +
+                "--es ${AutomationRelayContract.EXTRA_AUTOMATION_TOKEN} $token " +
+                "--es ${AutomationRelayContract.EXTRA_CALLER_HINT} $callerHint",
+        )
+        captureStep("automation_stop_invoked")
+        return output
+    }
+
+    fun waitForAutomationStatus(expectedStatus: AutomationCommandStatus) {
+        waitForAutomationStatus(expectedStatus, previousTimestamp = null)
+    }
+
+    fun automationStatusTimestamp(): Long? = automationRepository.load().lastAutomationAtEpochMs
+
+    fun waitForAutomationStatus(expectedStatus: AutomationCommandStatus, previousTimestamp: Long?) {
+        val found = runCatching {
+            composeRule.waitUntil(timeoutMillis = 15_000) {
+                val settings = automationRepository.load()
+                settings.lastAutomationStatus == expectedStatus &&
+                    (previousTimestamp == null || settings.lastAutomationAtEpochMs != previousTimestamp)
+            }
+            true
+        }.getOrDefault(false)
+        if (!found) {
+            captureDiagnostics("automation_status_timeout")
+            fail("Expected automation status '${expectedStatus.name}' was not observed within timeout.")
+        }
+    }
+
     fun openChromeAndReadIp(label: String): String {
+        resetChromeState()
         val failures = mutableListOf<String>()
         for (candidateUrl in PROBE_URL_CANDIDATES) {
             val urlLabel = sanitizeLabel(URI(candidateUrl).host ?: "probe")
@@ -143,33 +225,66 @@ internal class VpnTestHarness(
     }
 
     fun launchTunguska() {
-        device.executeShellCommand("am start -W -n $TUNGUSKA_COMPONENT")
-        device.wait(Until.hasObject(By.pkg(TUNGUSKA_PACKAGE)), 10_000)
+        device.executeShellCommand("cmd package enable $TUNGUSKA_PACKAGE")
+        val launchIntent = checkNotNull(
+            appContext.packageManager.getLaunchIntentForPackage(TUNGUSKA_PACKAGE),
+        ) {
+            "Unable to resolve the Tunguska launcher activity."
+        }.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        appContext.startActivity(launchIntent)
+        assertTrue(
+            "Tunguska did not reach the foreground.",
+            device.wait(Until.hasObject(By.pkg(TUNGUSKA_PACKAGE)), 15_000),
+        )
         composeRule.waitUntil(timeoutMillis = 10_000) {
-            composeRule.onAllNodesWithTag(UiTags.MAIN_SCROLL_COLUMN, useUnmergedTree = true)
-                .fetchSemanticsNodes().isNotEmpty()
+            runCatching {
+                composeRule.onAllNodesWithTag(UiTags.MAIN_SCROLL_COLUMN, useUnmergedTree = true)
+                    .fetchSemanticsNodes().isNotEmpty()
+            }.getOrDefault(false)
         }
         composeRule.waitForIdle()
         captureStep("tunguska_launched")
+    }
+
+    fun ensureRuntimeIdle() {
+        device.executeShellCommand("am force-stop $TRAFFIC_PROBE_PACKAGE")
+        device.executeShellCommand("am force-stop $CHROME_PACKAGE")
+        runCatching {
+            val status = automationOrchestrator.refreshStatus()
+            val snapshot = status.snapshot
+            if (snapshot != null && snapshot.phase != VpnRuntimePhase.IDLE) {
+                val stop = automationOrchestrator.stopRuntime()
+                check(stop.status == AutomationCommandStatus.SUCCESS) {
+                    "Failed to stop the runtime before test start: ${stop.summary} (${stop.error ?: "no error"})"
+                }
+            }
+        }.getOrElse { error ->
+            captureDiagnostics("ensure_runtime_idle_failure")
+            fail("Failed to reset the Tunguska runtime before test start: ${error.message}")
+        }
+        waitForVpnTransportState(active = false, timeoutMillis = 15_000, failOnTimeout = true)
     }
 
     fun captureDiagnostics(label: String) {
         device.executeShellCommand("mkdir -p $REMOTE_DIAGNOSTICS_DIRECTORY")
         device.executeShellCommand("uiautomator dump $REMOTE_DIAGNOSTICS_DIRECTORY/$label-window.xml")
         device.executeShellCommand("screencap -p $REMOTE_DIAGNOSTICS_DIRECTORY/$label-screen.png")
-        device.executeShellCommand(
-            "logcat -d -v threadtime -s " +
-                "TunguskaVpnService:I XrayTun2Socks:I TunguskaVpnNative:I Tunguska:I chromium:I *:S " +
-                "> $REMOTE_DIAGNOSTICS_DIRECTORY/$label-logcat.txt",
+        shellRedirect(
+            command = "logcat -d -v threadtime -s " +
+                "TunguskaVpnService:I XrayTun2Socks:I TunguskaVpnNative:I RuntimeAutomation:I Tunguska:I chromium:I *:S",
+            destination = "$REMOTE_DIAGNOSTICS_DIRECTORY/$label-logcat.txt",
         )
-        device.executeShellCommand(
-            "dumpsys connectivity > $REMOTE_DIAGNOSTICS_DIRECTORY/$label-connectivity.txt",
+        shellRedirect(
+            command = "dumpsys connectivity",
+            destination = "$REMOTE_DIAGNOSTICS_DIRECTORY/$label-connectivity.txt",
         )
-        device.executeShellCommand(
-            "dumpsys vpn > $REMOTE_DIAGNOSTICS_DIRECTORY/$label-vpn.txt",
+        shellRedirect(
+            command = "dumpsys vpn",
+            destination = "$REMOTE_DIAGNOSTICS_DIRECTORY/$label-vpn.txt",
         )
-        device.executeShellCommand(
-            "dumpsys activity services io.acionyx.tunguska > $REMOTE_DIAGNOSTICS_DIRECTORY/$label-services.txt",
+        shellRedirect(
+            command = "dumpsys activity services io.acionyx.tunguska",
+            destination = "$REMOTE_DIAGNOSTICS_DIRECTORY/$label-services.txt",
         )
         exportRedactedDiagnosticBundle(label)
     }
@@ -248,6 +363,12 @@ internal class VpnTestHarness(
         }
     }
 
+    private fun resetChromeState() {
+        device.executeShellCommand("am force-stop $CHROME_PACKAGE")
+        device.executeShellCommand("pm clear $CHROME_PACKAGE")
+        Thread.sleep(750)
+    }
+
     private fun tapConnectButton() {
         composeRule.onNodeWithTag(UiTags.CONNECT_BUTTON, useUnmergedTree = true)
             .performScrollTo()
@@ -266,6 +387,28 @@ internal class VpnTestHarness(
             captureDiagnostics("runtime_phase_timeout")
             fail("Expected runtime phase '$phaseText' was not observed within timeout.")
         }
+    }
+
+    private fun waitForVpnTransportState(
+        active: Boolean,
+        timeoutMillis: Long,
+        failOnTimeout: Boolean,
+    ): Boolean {
+        val found = runCatching {
+            val deadline = System.currentTimeMillis() + timeoutMillis
+            while (System.currentTimeMillis() < deadline) {
+                if (isVpnTransportActive() == active) {
+                    return@runCatching true
+                }
+                Thread.sleep(500)
+            }
+            false
+        }.getOrDefault(false)
+        if (!found && failOnTimeout) {
+            captureDiagnostics("vpn_transport_state_timeout")
+            fail("VPN transport active=$active was not observed within timeout.")
+        }
+        return found
     }
 
     private fun waitForComposeText(text: String, timeoutMillis: Long) {
@@ -325,7 +468,8 @@ internal class VpnTestHarness(
     }
 
     private fun waitForProbeResult(packageName: String, label: String): ProbeResult {
-        val deadline = System.currentTimeMillis() + 40_000
+        val timeoutMillis = if (packageName == TRAFFIC_PROBE_PACKAGE) 12_000L else 15_000L
+        val deadline = System.currentTimeMillis() + timeoutMillis
         while (System.currentTimeMillis() < deadline) {
             val objectMatch = device.findObject(By.text(IP_ADDRESS_PATTERN))
             if (objectMatch != null) {
@@ -387,6 +531,11 @@ internal class VpnTestHarness(
                 status = "androidTest capture",
                 persistedProfileHash = stored.profile.canonicalHash(),
             ),
+            automationState = AutomationState(
+                storagePath = "androidTest",
+                keyReference = "androidTest",
+                vpnPermissionReady = true,
+            ),
             routePreview = preview,
             previewOutcome = previewOutcome,
         )
@@ -397,6 +546,14 @@ internal class VpnTestHarness(
         device.executeShellCommand("mkdir -p $REMOTE_DIAGNOSTICS_DIRECTORY")
         device.executeShellCommand("uiautomator dump $REMOTE_DIAGNOSTICS_DIRECTORY/$label-window.xml")
         device.executeShellCommand("screencap -p $REMOTE_DIAGNOSTICS_DIRECTORY/$label-screen.png")
+    }
+
+    private fun shellRedirect(command: String, destination: String) {
+        val escapedCommand = command.replace("'", "'\\''")
+        val escapedDestination = destination.replace("'", "'\\''")
+        device.executeShellCommand(
+            "sh -c '$escapedCommand > $escapedDestination'",
+        )
     }
 
     private fun detectProbeFailure(dump: String): String? {
@@ -436,18 +593,33 @@ internal class VpnTestHarness(
         }
     }
 
+    private fun isVpnTransportActive(): Boolean {
+        return connectivityManager.allNetworks.any { network ->
+            connectivityManager.getNetworkCapabilities(network)
+                ?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+        }
+    }
+
     companion object {
         private const val TUNGUSKA_PACKAGE = "io.acionyx.tunguska"
         private const val CHROME_PACKAGE = "com.android.chrome"
         private const val TRAFFIC_PROBE_PACKAGE = "io.acionyx.tunguska.trafficprobe"
         private const val TUNGUSKA_COMPONENT = "io.acionyx.tunguska/io.acionyx.tunguska.app.MainActivity"
+        private const val AUTOMATION_COMPONENT =
+            "io.acionyx.tunguska/io.acionyx.tunguska.app.AutomationRelayActivity"
         private const val CHROME_COMPONENT = "com.android.chrome/com.google.android.apps.chrome.Main"
         private const val TRAFFIC_PROBE_COMPONENT =
             "io.acionyx.tunguska.trafficprobe/io.acionyx.tunguska.trafficprobe.ProbeActivity"
         private const val REMOTE_DIAGNOSTICS_DIRECTORY = "/sdcard/Download/tunguska-smoke"
+        private const val AUTOMATION_TOKEN_SETTING = "tunguska_automation_token"
         private const val PROBE_URL_PRIMARY = "https://api.ipify.org/"
         private const val PROBE_URL_FALLBACK = "https://ifconfig.me/ip"
-        private val PROBE_URL_CANDIDATES = listOf(PROBE_URL_PRIMARY, PROBE_URL_FALLBACK)
+        private const val PROBE_URL_SECONDARY_FALLBACK = "https://checkip.amazonaws.com/"
+        private val PROBE_URL_CANDIDATES = listOf(
+            PROBE_URL_PRIMARY,
+            PROBE_URL_FALLBACK,
+            PROBE_URL_SECONDARY_FALLBACK,
+        )
         private val IP_REGEX = Regex("""\b(?:\d{1,3}\.){3}\d{1,3}\b""")
         private val IP_ADDRESS_PATTERN: Pattern = Pattern.compile(IP_REGEX.pattern)
         private const val DEFAULT_SHARE_LINK =
