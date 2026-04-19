@@ -645,6 +645,12 @@ private class XrayTunnelRuntimeBuilder(
     }
 
     override fun establish(): TunnelInterfaceHandle? {
+        if (sessionPlan.splitTunnelMode is io.acionyx.tunguska.domain.SplitTunnelMode.Allowlist) {
+            // In allowlist mode the Tunguska package bypasses the VPN by staying out of the
+            // routed package set entirely. The active xray lane depends on this invariant for
+            // its own outbound sockets, so treat it as an explicit runtime property.
+            runtimePackageBypassesVpnMutable = true
+        }
         if (sessionPlan.splitTunnelMode is io.acionyx.tunguska.domain.SplitTunnelMode.Allowlist && effectiveAllowedApplications == 0) {
             throw IllegalStateException(
                 "Allowlist mode has no routable applications after excluding the Tunguska runtime package.",
@@ -652,6 +658,9 @@ private class XrayTunnelRuntimeBuilder(
         }
         if (!hasAllowedApplications && sessionPlan.splitTunnelMode !is io.acionyx.tunguska.domain.SplitTunnelMode.Allowlist) {
             addDisallowedApplication(appPackageName)
+        }
+        check(runtimePackageBypassesVpnMutable) {
+            "xray+tun2socks requires the Tunguska runtime package to bypass the VPN path."
         }
         return builder.establish()?.let(::RawParcelFileDescriptorTunnelHandle)
     }
@@ -744,7 +753,7 @@ internal object XrayCompatConfigCompiler {
         put("settings", buildJsonObject {
             put("auth", "password")
             put("ip", "127.0.0.1")
-            put("udp", true)
+            put("udp", false)
             put("accounts", buildJsonArray {
                 add(
                     buildJsonObject {
@@ -760,7 +769,6 @@ internal object XrayCompatConfigCompiler {
             put("destOverride", buildJsonArray {
                 add(JsonPrimitive("http"))
                 add(JsonPrimitive("tls"))
-                add(JsonPrimitive("quic"))
             })
         })
     }

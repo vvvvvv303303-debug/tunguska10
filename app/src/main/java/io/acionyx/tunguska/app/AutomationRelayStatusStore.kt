@@ -1,22 +1,51 @@
 package io.acionyx.tunguska.app
 
 import android.content.Context
+import io.acionyx.tunguska.crypto.CipherBox
 import io.acionyx.tunguska.domain.CanonicalJson
-import io.acionyx.tunguska.vpnservice.VpnRuntimePhase
-import java.io.File
+import io.acionyx.tunguska.storage.EncryptedArtifactStore
+import java.nio.file.Path
 import java.util.UUID
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 
+private const val AUTOMATION_STATUS_MASTER_KEY_ALIAS: String = "io.acionyx.tunguska.automation.status.master"
+private const val AUTOMATION_STATUS_RELATIVE_PATH: String = "automation/relay-status.json.enc"
+private const val AUTOMATION_STATUS_ARTIFACT_TYPE: String = "automation_status"
+
 class AutomationRelayStatusStore(
-    context: Context,
+    path: Path,
+    cipherBox: CipherBox,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
-    private val file: File = resolveStatusFile(context)
+    private val store = EncryptedArtifactStore(
+        path = path,
+        cipherBox = cipherBox,
+        clock = clock,
+    )
     private val lock = Any()
 
-    val shellPath: String
-        get() = file.absolutePath
+    constructor(
+        context: Context,
+        cipherBox: CipherBox = AndroidKeyStoreCipherBox(AUTOMATION_STATUS_MASTER_KEY_ALIAS),
+        clock: () -> Long = System::currentTimeMillis,
+    ) : this(
+        path = context.filesDir.toPath().resolve(AUTOMATION_STATUS_RELATIVE_PATH),
+        cipherBox = cipherBox,
+        clock = clock,
+    ) {
+        deleteLegacyPlaintextStatus(context)
+    }
+
+    val storagePath: String = store.path.toString()
+    val keyReference: String = "android-keystore:$AUTOMATION_STATUS_MASTER_KEY_ALIAS"
+
+    fun load(): AutomationRelayStatusRecord? = synchronized(lock) {
+        store.load()?.let { stored ->
+            CanonicalJson.instance.decodeFromString<AutomationRelayStatusRecord>(stored.payloadJson)
+        }
+    }
 
     fun markAccepted(
         action: String,
@@ -103,18 +132,27 @@ class AutomationRelayStatusStore(
     }
 
     private fun write(record: AutomationRelayStatusRecord): AutomationRelayStatusRecord = synchronized(lock) {
-        file.parentFile?.mkdirs()
-        file.writeText(CanonicalJson.instance.encodeToString(record), Charsets.UTF_8)
+        store.save(
+            artifactType = AUTOMATION_STATUS_ARTIFACT_TYPE,
+            payloadJson = CanonicalJson.instance.encodeToString(record),
+            redacted = true,
+        )
         record
     }
 
-    private fun resolveStatusFile(context: Context): File {
-        val mediaRoot = context.externalMediaDirs
-            .firstOrNull { it != null }
-            ?.resolve("automation")
-        val fallback = context.getExternalFilesDir("automation")
-        val root = mediaRoot ?: fallback ?: context.filesDir.resolve("automation-status-fallback")
-        return root.resolve("relay-status.json")
+    private fun deleteLegacyPlaintextStatus(context: Context) {
+        sequenceOf(
+            context.externalMediaDirs.firstOrNull()?.resolve("automation")?.resolve(LEGACY_STATUS_FILE_NAME),
+            context.getExternalFilesDir("automation")?.resolve(LEGACY_STATUS_FILE_NAME),
+        )
+            .filterNotNull()
+            .forEach { candidate ->
+                runCatching {
+                    if (candidate.exists()) {
+                        candidate.delete()
+                    }
+                }
+            }
     }
 }
 
@@ -122,6 +160,8 @@ private object AutomationRelayProgressStatus {
     const val REQUEST_ACCEPTED: String = "REQUEST_ACCEPTED"
     const val UNSPECIFIED_ACTION: String = "UNSPECIFIED_ACTION"
 }
+
+private const val LEGACY_STATUS_FILE_NAME: String = "relay-status.json"
 
 @Serializable
 data class AutomationRelayStatusRecord(

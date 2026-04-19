@@ -78,7 +78,9 @@ Generic VPN visibility is not treated as a release blocker unless it also proves
 - The active lane is `xray+tun2socks`.
 - The bridge is restricted to `127.0.0.1`.
 - The bridge uses a per-session random port and credentials.
+- UDP association is disabled on the bridge.
 - Management APIs and debug listeners are not enabled in the active lane.
+- The active lane fails closed unless the Tunguska package is guaranteed to bypass the VPN path for its own outbound runtime sockets.
 
 ### Automation hardening
 
@@ -114,6 +116,7 @@ Generic VPN visibility is not treated as a release blocker unless it also proves
 
 - Profile storage is encrypted in app-private storage.
 - Export artifacts are encrypted.
+- Automation status records are encrypted in app-private storage.
 - Diagnostic bundles are redacted by default.
 
 ## Residual Risks

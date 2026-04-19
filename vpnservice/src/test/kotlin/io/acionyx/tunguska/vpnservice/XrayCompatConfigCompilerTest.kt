@@ -40,7 +40,7 @@ class XrayCompatConfigCompilerTest {
         assertEquals(25001, inbound.getValue("port").jsonPrimitive.content.toInt())
         assertEquals("password", settings.getValue("auth").jsonPrimitive.content)
         assertEquals("127.0.0.1", settings.getValue("ip").jsonPrimitive.content)
-        assertTrue(settings.getValue("udp").jsonPrimitive.content.toBoolean())
+        assertFalse(settings.getValue("udp").jsonPrimitive.content.toBoolean())
         assertEquals("bridge-user", account.getValue("user").jsonPrimitive.content)
         assertEquals("bridge-pass", account.getValue("pass").jsonPrimitive.content)
     }

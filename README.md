@@ -75,9 +75,10 @@ The active MVP runtime lane is `xray+tun2socks`.
 
 - Android `VpnService` owns the TUN interface
 - the packaged Xray executable comes from the Linux release lane because it carries real traffic reliably in the Android app sandbox for the current MVP path
-- the runtime uses a loopback-only authenticated SOCKS bridge as an internal implementation detail
+- the runtime uses a loopback-only authenticated TCP-only SOCKS bridge as an internal implementation detail
 - the bridge binds only to `127.0.0.1`
 - the bridge uses a random high port and random credentials per session
+- UDP association is disabled on the bridge
 - management APIs, debug endpoints, and pprof-style listeners are not enabled in the active lane
 - `geoip.dat` and `geosite.dat` are staged into the runtime workspace from the pinned Xray asset set
 
@@ -211,7 +212,7 @@ Automation state is also included in redacted form:
 - whether `VpnService` permission is already satisfied
 - last automation status and error
 - last caller hint
-- encrypted storage location hash
+- encrypted app-private status storage
 
 The automation token itself is not exported.
 
@@ -243,9 +244,11 @@ Current security properties in the shipped code:
 - no telemetry by default
 - no cleartext traffic allowed by app network policy
 - no unauthenticated localhost proxy in the active runtime lane
+- no UDP support on the authenticated local bridge in the active runtime lane
 - no enabled Xray or sing-box management API in the active runtime lane
 - no open broadcast control surface for external automation
 - exported automation control is opt-in and token-gated
+- automation status metadata is sealed into encrypted app-private storage
 - no deep-link import path enabled by default
 - no release-path claim of VPN invisibility
 - no silent migration of existing stored profiles into `RU direct`

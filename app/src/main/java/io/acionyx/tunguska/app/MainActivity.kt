@@ -6,7 +6,6 @@ import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.Manifest
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -99,9 +98,6 @@ private fun TunguskaApp(
     var showRegionalBypassAdvanced by remember { mutableStateOf(false) }
     var showFrozenSecondarySurface by remember { mutableStateOf(false) }
     var regionalDirectDomainDraft by remember { mutableStateOf("") }
-    val requestNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
-        viewModel.refreshSubscriptionNotificationStatus()
-    }
     val requestPermission = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             viewModel.markVpnPermissionGranted()
@@ -429,19 +425,13 @@ private fun TunguskaApp(
                                 }
                                 ActionGroup {
                                     ActionButton(
-                                        text = if (state.subscriptionState.notificationsEnabled) "Alert Settings" else "Enable Alerts",
+                                        text = "Alert Settings",
                                         onClick = {
-                                            if (!state.subscriptionState.notificationsEnabled &&
-                                                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
-                                            ) {
-                                                requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
-                                            } else {
-                                                context.startActivity(
-                                                    Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                                                        putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                                                    },
-                                                )
-                                            }
+                                            context.startActivity(
+                                                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                                    putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                                },
+                                            )
                                         },
                                         primary = false,
                                     )

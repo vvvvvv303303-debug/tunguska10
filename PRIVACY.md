@@ -14,6 +14,7 @@ Tunguska stores the following categories locally:
 - regional bypass preferences and the one-time decision for existing profiles
 - derived runtime metadata such as config hashes and route-preview state
 - encrypted profile backups and encrypted redacted diagnostic bundles
+- encrypted automation status records for the Anubis-style control path
 - optional subscription configuration and related trust state for the frozen secondary surface
 
 Profile and artifact storage uses app-private encrypted files. The primary product path does not rely on external storage.
@@ -34,15 +35,13 @@ The current app manifest requests:
 
 - `INTERNET`
 - `CAMERA`
-- `POST_NOTIFICATIONS`
 
 Permission intent:
 
 - `INTERNET`: required for VPN traffic and optional subscription fetches
 - `CAMERA`: only for live QR scanning
-- `POST_NOTIFICATIONS`: only for the frozen secondary subscription-notification surface, not for the primary VPN path
 
-The core VPN flow does not require camera or notification permission.
+The core VPN flow does not require camera permission.
 
 ## Import Privacy
 

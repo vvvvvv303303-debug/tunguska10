@@ -55,7 +55,7 @@ am start -W -n io.acionyx.tunguska/.app.AutomationRelayActivity -a io.acionyx.tu
 
 Automation requests operate on the currently sealed Tunguska profile.
 
-They can return these outcomes internally and in the local status store:
+They can return these outcomes internally and in the encrypted app-private status store:
 
 - `SUCCESS`
 - `AUTOMATION_DISABLED`
@@ -80,6 +80,7 @@ Redacted diagnostic bundles include:
 - last caller hint
 
 The automation token is not included in diagnostic exports.
+The automation status record is no longer written to external app storage.
 
 ## Validation
 
