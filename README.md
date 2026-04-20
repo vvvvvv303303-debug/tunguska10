@@ -2,7 +2,6 @@
 
 Tunguska is an Android VPN client for VLESS + REALITY profiles with a security-first runtime, staged profile import, per-app split routing, and fail-closed behavior.
 
-Current release: `v0.2.4`
 
 ## Product Scope
 
