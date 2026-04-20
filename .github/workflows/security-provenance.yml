@@ -26,12 +26,17 @@ jobs:
           "${SDKMANAGER}" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
       - name: Build Debug APK
         run: ./gradlew :app:assembleDebug --no-configuration-cache
+      - name: Prepare Arm64 Debug APK
+        run: |
+          mkdir -p provenance-assets
+          DEBUG_ARM64="$(find app/build/outputs/apk/debug -name '*arm64-v8a*debug*.apk' | head -n 1)"
+          cp "$DEBUG_ARM64" provenance-assets/tunguska-arm64-v8a-debug.apk
       - name: Upload Debug APK
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: app-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: provenance-assets/tunguska-arm64-v8a-debug.apk
       - name: Attest Build Provenance
         uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
         with:
-          subject-path: app/build/outputs/apk/debug/app-debug.apk
+          subject-path: provenance-assets/tunguska-arm64-v8a-debug.apk

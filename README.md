@@ -2,7 +2,7 @@
 
 Tunguska is an Android VPN client for VLESS + REALITY profiles with a security-first runtime, staged profile import, per-app split routing, and fail-closed behavior.
 
-Current release: `v0.2.3`
+Current release: `v0.2.4`
 
 ## Product Scope
 
@@ -31,7 +31,8 @@ The first screen is intentionally product-first:
 ## Supported Platform
 
 - Android `8.0+` (`minSdk 26`)
-- Shipping ABI: `arm64-v8a`
+- Published device ABI: `arm64-v8a`
+- Published emulator ABI: `x86_64`
 
 ## Supported Connection Formats
 
@@ -85,7 +86,7 @@ The active MVP runtime lane is `xray+tun2socks`.
 
 Tunguska does not treat `RUNNING` as success on its own.
 
-Current proof for `v0.2.3`:
+Current proof for `v0.2.4`:
 
 - a headed emulator harness covers import, UI flow, stop, automation control-path, screenshot capture, UI hierarchy capture, and filtered diagnostics
 - the Android VPN permission dialog is completed through UI Automator in the local harness
@@ -93,7 +94,7 @@ Current proof for `v0.2.3`:
 - a separate headed-emulator Anubis harness proves the control-path `freeze -> start Tunguska -> stop -> refreeze`
 - real-device testing has confirmed both live tunnel traffic and a different public IP with VPN enabled than without VPN
 
-The emulator remains useful for UI and orchestration debugging, but after the switch to `arm64-v8a` shipping builds the authoritative dataplane proof for the active runtime remains a real arm64 device.
+The emulator remains useful for UI, orchestration, and dataplane debugging through the dedicated `x86_64` emulator build, while the primary sideload artifact for real devices remains `arm64-v8a`.
 
 ## Split Routing
 
@@ -252,20 +253,21 @@ Current security properties in the shipped code:
 
 ## Current Limitations
 
-Tunguska `v0.2.3` is a real sideload release, but it still has clear limits.
+Tunguska `v0.2.4` is a real sideload release, but it still has clear limits.
 
 - The current release is not Play-signed or store-distributed.
 - The active runtime uses an authenticated internal loopback bridge rather than a pure no-loopback embedded transport.
 - Server-side Xray blocking is only complementary. If the client intentionally routes a destination direct, the server will never see that traffic.
-- The full physical-device detector matrix is still pending. Functional traffic has been confirmed on a real phone, but after moving the shipping build to `arm64-v8a` the local `x86_64` emulator is no longer a trustworthy dataplane proof target for the packaged Xray runtime.
+- The full physical-device detector matrix is still pending. Functional traffic has been confirmed on a real phone, and local headed-emulator dataplane proof now uses the dedicated `x86_64` emulator APK rather than ARM translation.
 - Generic VPN visibility such as `TRANSPORT_VPN`, foreground notification presence, and `tun0` visibility is not treated as a defect by itself.
 
 ## Releases
 
 Installable APKs are available from GitHub Releases and from GitHub Actions artifacts.
 
-- GitHub release assets are published for version tags such as `v0.2.3`
-- the main sideload artifact is `tunguska-vX.Y.Z-internal.apk`
+- GitHub release assets are published for version tags such as `v0.2.4`
+- the main device sideload artifact is `tunguska-vX.Y.Z-arm64-v8a-internal.apk`
+- the emulator test artifact is `tunguska-vX.Y.Z-x86_64-emulator-internal.apk`
 - a matching `.sha256` file is published for each APK
 
 Release page:

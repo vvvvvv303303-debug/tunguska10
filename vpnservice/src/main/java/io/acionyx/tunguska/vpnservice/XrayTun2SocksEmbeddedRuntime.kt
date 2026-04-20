@@ -753,7 +753,7 @@ internal object XrayCompatConfigCompiler {
         put("settings", buildJsonObject {
             put("auth", "password")
             put("ip", "127.0.0.1")
-            put("udp", false)
+            put("udp", true)
             put("accounts", buildJsonArray {
                 add(
                     buildJsonObject {

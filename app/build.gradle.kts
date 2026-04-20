@@ -12,11 +12,8 @@ android {
         applicationId = "io.acionyx.tunguska"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.2.3"
-        ndk {
-            abiFilters += "arm64-v8a"
-        }
+        versionCode = 7
+        versionName = "0.2.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         testInstrumentationRunnerArguments["clearPackageData"] = "true"
@@ -47,6 +44,15 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "x86_64")
+            isUniversalApk = false
+        }
     }
 
     testOptions {

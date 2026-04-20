@@ -31,15 +31,25 @@ jobs:
         run: |
           TAG="${GITHUB_REF_NAME}"
           mkdir -p release-assets
-          cp app/build/outputs/apk/internal/app-internal.apk "release-assets/tunguska-${TAG}-internal.apk"
-          cp app/build/outputs/apk/debug/app-debug.apk "release-assets/tunguska-${TAG}-debug.apk"
-          sha256sum "release-assets/tunguska-${TAG}-internal.apk" > "release-assets/tunguska-${TAG}-internal.apk.sha256"
-          sha256sum "release-assets/tunguska-${TAG}-debug.apk" > "release-assets/tunguska-${TAG}-debug.apk.sha256"
+          INTERNAL_ARM64="$(find app/build/outputs/apk/internal -name '*arm64-v8a*internal*.apk' | head -n 1)"
+          INTERNAL_X64="$(find app/build/outputs/apk/internal -name '*x86_64*internal*.apk' | head -n 1)"
+          DEBUG_ARM64="$(find app/build/outputs/apk/debug -name '*arm64-v8a*debug*.apk' | head -n 1)"
+          DEBUG_X64="$(find app/build/outputs/apk/debug -name '*x86_64*debug*.apk' | head -n 1)"
+          cp "$INTERNAL_ARM64" "release-assets/tunguska-${TAG}-arm64-v8a-internal.apk"
+          cp "$INTERNAL_X64" "release-assets/tunguska-${TAG}-x86_64-emulator-internal.apk"
+          cp "$DEBUG_ARM64" "release-assets/tunguska-${TAG}-arm64-v8a-debug.apk"
+          cp "$DEBUG_X64" "release-assets/tunguska-${TAG}-x86_64-emulator-debug.apk"
+          sha256sum "release-assets/tunguska-${TAG}-arm64-v8a-internal.apk" > "release-assets/tunguska-${TAG}-arm64-v8a-internal.apk.sha256"
+          sha256sum "release-assets/tunguska-${TAG}-x86_64-emulator-internal.apk" > "release-assets/tunguska-${TAG}-x86_64-emulator-internal.apk.sha256"
+          sha256sum "release-assets/tunguska-${TAG}-arm64-v8a-debug.apk" > "release-assets/tunguska-${TAG}-arm64-v8a-debug.apk.sha256"
+          sha256sum "release-assets/tunguska-${TAG}-x86_64-emulator-debug.apk" > "release-assets/tunguska-${TAG}-x86_64-emulator-debug.apk.sha256"
           cat > release-assets/release-notes.md <<EOF
           Installable APK assets for ${TAG}.
 
-          - \`tunguska-${TAG}-internal.apk\`: non-debuggable internal build for sideload testing.
-          - \`tunguska-${TAG}-debug.apk\`: debuggable build for troubleshooting only.
+          - \`tunguska-${TAG}-arm64-v8a-internal.apk\`: primary non-debuggable sideload build for real arm64 Android devices.
+          - \`tunguska-${TAG}-x86_64-emulator-internal.apk\`: non-debuggable emulator build for x86_64 Android Emulator testing.
+          - \`tunguska-${TAG}-arm64-v8a-debug.apk\`: debuggable arm64 build for troubleshooting only.
+          - \`tunguska-${TAG}-x86_64-emulator-debug.apk\`: debuggable x86_64 emulator build for troubleshooting only.
           - Each APK ships with a matching \`.sha256\` checksum file.
           EOF
       - name: Create Or Update GitHub Release
@@ -53,8 +63,12 @@ jobs:
               --notes-file release-assets/release-notes.md
           fi
           gh release upload "${TAG}" \
-            "release-assets/tunguska-${TAG}-internal.apk" \
-            "release-assets/tunguska-${TAG}-internal.apk.sha256" \
-            "release-assets/tunguska-${TAG}-debug.apk" \
-            "release-assets/tunguska-${TAG}-debug.apk.sha256" \
+            "release-assets/tunguska-${TAG}-arm64-v8a-internal.apk" \
+            "release-assets/tunguska-${TAG}-arm64-v8a-internal.apk.sha256" \
+            "release-assets/tunguska-${TAG}-x86_64-emulator-internal.apk" \
+            "release-assets/tunguska-${TAG}-x86_64-emulator-internal.apk.sha256" \
+            "release-assets/tunguska-${TAG}-arm64-v8a-debug.apk" \
+            "release-assets/tunguska-${TAG}-arm64-v8a-debug.apk.sha256" \
+            "release-assets/tunguska-${TAG}-x86_64-emulator-debug.apk" \
+            "release-assets/tunguska-${TAG}-x86_64-emulator-debug.apk.sha256" \
             --clobber

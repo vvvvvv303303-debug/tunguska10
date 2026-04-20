@@ -5,7 +5,6 @@ param(
 $ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\\..")).Path
-$apkRelativePath = "app\\build\\outputs\\apk\\internal\\app-internal.apk"
 $distDir = Join-Path $root "dist"
 
 Push-Location $root
@@ -23,9 +22,10 @@ try {
 
     .\gradlew.bat :app:testDebugUnitTest :app:assembleInternal --no-daemon --rerun-tasks --no-build-cache --no-configuration-cache
 
-    $sourceApk = Join-Path $root $apkRelativePath
+    $sourceApk = Get-ChildItem -Path (Join-Path $root "app\build\outputs\apk\internal") -Recurse -Filter "*arm64-v8a*internal*.apk" |
+        Select-Object -First 1 -ExpandProperty FullName
     if (-not (Test-Path $sourceApk)) {
-        throw "Internal APK was not produced at $sourceApk"
+        throw "Arm64 internal APK was not produced."
     }
 
     $versionMatch = Select-String -Path "app/build.gradle.kts" -Pattern 'versionName = "([^"]+)"'
@@ -36,7 +36,7 @@ try {
     $distVersion = "$baseVersion-internal"
 
     New-Item -ItemType Directory -Force -Path $distDir | Out-Null
-    $distApk = Join-Path $distDir "tunguska-$distVersion.apk"
+    $distApk = Join-Path $distDir "tunguska-$distVersion-arm64-v8a.apk"
     Copy-Item -Force $sourceApk $distApk
 
     $sha = (Get-FileHash -Algorithm SHA256 $distApk).Hash.ToLowerInvariant()

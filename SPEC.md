@@ -148,7 +148,7 @@ The product does not currently target:
 - total VPN invisibility
 - interface-name randomization such as hiding `tun0`
 - a fully hidden subscription-centric product surface
-- production store-signing or Play distribution in `v0.2.3`
+- production store-signing or Play distribution in `v0.2.4`
 
 ## Frozen Secondary Surface
 

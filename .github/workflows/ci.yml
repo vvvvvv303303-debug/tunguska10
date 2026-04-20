@@ -29,21 +29,36 @@ jobs:
         run: chmod +x gradlew
       - name: Verify JVM and Android Build
         run: ./gradlew test :vpnservice:testDebugUnitTest :app:assembleDebug :app:assembleInternal --no-configuration-cache
-      - name: Generate APK Checksums
+      - name: Prepare ABI-Specific APK Assets
         run: |
-          sha256sum app/build/outputs/apk/debug/app-debug.apk > app/build/outputs/apk/debug/app-debug.apk.sha256
-          sha256sum app/build/outputs/apk/internal/app-internal.apk > app/build/outputs/apk/internal/app-internal.apk.sha256
-      - name: Upload Debug APK
+          mkdir -p ci-assets
+          INTERNAL_ARM64="$(find app/build/outputs/apk/internal -name '*arm64-v8a*internal*.apk' | head -n 1)"
+          INTERNAL_X64="$(find app/build/outputs/apk/internal -name '*x86_64*internal*.apk' | head -n 1)"
+          DEBUG_ARM64="$(find app/build/outputs/apk/debug -name '*arm64-v8a*debug*.apk' | head -n 1)"
+          DEBUG_X64="$(find app/build/outputs/apk/debug -name '*x86_64*debug*.apk' | head -n 1)"
+          cp "$INTERNAL_ARM64" ci-assets/tunguska-arm64-v8a-internal.apk
+          cp "$INTERNAL_X64" ci-assets/tunguska-x86_64-emulator-internal.apk
+          cp "$DEBUG_ARM64" ci-assets/tunguska-arm64-v8a-debug.apk
+          cp "$DEBUG_X64" ci-assets/tunguska-x86_64-emulator-debug.apk
+          sha256sum ci-assets/tunguska-arm64-v8a-internal.apk > ci-assets/tunguska-arm64-v8a-internal.apk.sha256
+          sha256sum ci-assets/tunguska-x86_64-emulator-internal.apk > ci-assets/tunguska-x86_64-emulator-internal.apk.sha256
+          sha256sum ci-assets/tunguska-arm64-v8a-debug.apk > ci-assets/tunguska-arm64-v8a-debug.apk.sha256
+          sha256sum ci-assets/tunguska-x86_64-emulator-debug.apk > ci-assets/tunguska-x86_64-emulator-debug.apk.sha256
+      - name: Upload Debug APKs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: tunguska-debug-apk
+          name: tunguska-debug-apks
           path: |
-            app/build/outputs/apk/debug/app-debug.apk
-            app/build/outputs/apk/debug/app-debug.apk.sha256
-      - name: Upload Internal APK
+            ci-assets/tunguska-arm64-v8a-debug.apk
+            ci-assets/tunguska-arm64-v8a-debug.apk.sha256
+            ci-assets/tunguska-x86_64-emulator-debug.apk
+            ci-assets/tunguska-x86_64-emulator-debug.apk.sha256
+      - name: Upload Internal APKs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: tunguska-internal-apk
+          name: tunguska-internal-apks
           path: |
-            app/build/outputs/apk/internal/app-internal.apk
-            app/build/outputs/apk/internal/app-internal.apk.sha256
+            ci-assets/tunguska-arm64-v8a-internal.apk
+            ci-assets/tunguska-arm64-v8a-internal.apk.sha256
+            ci-assets/tunguska-x86_64-emulator-internal.apk
+            ci-assets/tunguska-x86_64-emulator-internal.apk.sha256

@@ -4,7 +4,7 @@ This document defines the real-device validation matrix for Tunguska `v0.2.x`.
 
 ## Current Status
 
-- Release exists: `v0.2.3`
+- Release exists: `v0.2.4`
 - Headed emulator harness covers import, UI flow, stop, automation control-path, split-routing helper flows, and artifact capture
 - Headed emulator joint Tunguska + Anubis orchestration has been proven for the control path with a real VLESS + REALITY share link passed through CLI or environment, not committed into the repo
 - Functional real-device traffic and public-IP change have been confirmed
@@ -84,5 +84,5 @@ If external orchestration is in scope, validate it separately after the standalo
 
 - The product does not claim VPN invisibility.
 - The product does claim that bypass-grade local attack surfaces are the real blocker.
-- The headed emulator is useful for UI and control-path debugging, but the authoritative IP proof for the current arm64-only shipping runtime remains a physical-device check.
+- The headed emulator is a valid local dataplane check when using the dedicated `x86_64` emulator APK. The authoritative final gate for the shipping `arm64-v8a` runtime still remains a physical-device check.
 - If `xray+tun2socks` passes this matrix, it remains the primary runtime for the next release line.
