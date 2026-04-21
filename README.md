@@ -252,8 +252,6 @@ Current security properties in the shipped code:
 
 ## Current Limitations
 
-Tunguska `v0.2.4` is a real sideload release, but it still has clear limits.
-
 - The current release is not Play-signed or store-distributed.
 - The active runtime uses an authenticated internal loopback bridge rather than a pure no-loopback embedded transport.
 - Server-side Xray blocking is only complementary. If the client intentionally routes a destination direct, the server will never see that traffic.
