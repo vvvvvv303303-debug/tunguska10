@@ -1,9 +1,13 @@
 param(
-    [string]$OutputPath = "C:\src\tunguska\logs\ui-latest.xml"
+    [string]$OutputPath = ""
 )
 
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot\UiAutomatorTools.ps1"
+
+if (-not $OutputPath) {
+    $OutputPath = Get-UiHierarchyPath
+}
 
 $path = Export-UiHierarchy -OutputPath $OutputPath
 [xml]$xml = Get-Content -Path $path

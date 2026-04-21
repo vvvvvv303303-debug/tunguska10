@@ -1,10 +1,7 @@
-function Get-AdbPath {
-    $sdkRoot = "C:\Users\vladi\AppData\Local\Android\Sdk"
-    $adb = Join-Path $sdkRoot "platform-tools\adb.exe"
-    if (-not (Test-Path $adb)) {
-        throw "adb.exe not found at $adb"
-    }
-    return $adb
+. "$PSScriptRoot\..\common\PathTools.ps1"
+
+function Get-UiHierarchyPath {
+    return Join-Path (Get-LogsRoot) "ui-latest.xml"
 }
 
 function Invoke-Adb {
@@ -19,8 +16,12 @@ function Invoke-Adb {
 
 function Export-UiHierarchy {
     param(
-        [string]$OutputPath = "C:\src\tunguska\logs\ui-latest.xml"
+        [string]$OutputPath = ""
     )
+
+    if (-not $OutputPath) {
+        $OutputPath = Get-UiHierarchyPath
+    }
 
     $directory = Split-Path -Parent $OutputPath
     New-Item -ItemType Directory -Force -Path $directory | Out-Null
@@ -31,8 +32,12 @@ function Export-UiHierarchy {
 
 function Get-UiNodes {
     param(
-        [string]$HierarchyPath = "C:\src\tunguska\logs\ui-latest.xml"
+        [string]$HierarchyPath = ""
     )
+
+    if (-not $HierarchyPath) {
+        $HierarchyPath = Get-UiHierarchyPath
+    }
 
     if (-not (Test-Path $HierarchyPath)) {
         $HierarchyPath = Export-UiHierarchy -OutputPath $HierarchyPath
@@ -68,8 +73,12 @@ function Find-UiNodeByText {
         [Parameter(Mandatory = $true)]
         [string]$Text,
         [switch]$Exact,
-        [string]$HierarchyPath = "C:\src\tunguska\logs\ui-latest.xml"
+        [string]$HierarchyPath = ""
     )
+
+    if (-not $HierarchyPath) {
+        $HierarchyPath = Get-UiHierarchyPath
+    }
 
     $nodes = Get-UiNodes -HierarchyPath $HierarchyPath
     $match = $nodes | Where-Object {
@@ -101,8 +110,12 @@ function Invoke-UiTapByText {
         [Parameter(Mandatory = $true)]
         [string]$Text,
         [switch]$Exact,
-        [string]$HierarchyPath = "C:\src\tunguska\logs\ui-latest.xml"
+        [string]$HierarchyPath = ""
     )
+
+    if (-not $HierarchyPath) {
+        $HierarchyPath = Get-UiHierarchyPath
+    }
 
     $node = Find-UiNodeByText -Text $Text -Exact:$Exact -HierarchyPath $HierarchyPath
     $point = Convert-BoundsToPoint -Bounds $node.Bounds

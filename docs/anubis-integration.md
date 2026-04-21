@@ -84,11 +84,18 @@ The automation status record is no longer written to external app storage.
 
 ## Validation
 
-The local harness for combined Tunguska + Anubis testing is:
+The canonical combined Tunguska + Anubis proof lives outside the production app inside the neutral host module documented in [jointtesthost/README.md](../jointtesthost/README.md).
 
-- [tools/integration/run-anubis-e2e.ps1](/C:/src/tunguska/tools/integration/run-anubis-e2e.ps1)
+The runner for that proof is [tools/integration/run-anubis-e2e.ps1](../tools/integration/run-anubis-e2e.ps1).
 
-That harness expects a real VLESS share link via CLI or `TUNGUSKA_REAL_SHARE_LINK` and uses a headed emulator by default.
+That runner:
+
+- expects a real VLESS share link via CLI or `TUNGUSKA_REAL_SHARE_LINK`
+- uses a headed emulator by default
+- resolves the Android SDK from `ANDROID_SDK_ROOT`, `ANDROID_HOME`, or the standard local SDK location
+- resolves the Anubis checkout from `-AnubisRepo` or a sibling `../anubis` repo
+
+The broader local validation flow, supporting scripts, and privacy rules are documented in [docs/e2e-testing.md](./e2e-testing.md).
 
 The intended acceptance bar for that harness is:
 

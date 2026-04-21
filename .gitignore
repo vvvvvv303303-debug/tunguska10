@@ -6,6 +6,7 @@ local.properties
 .tmp/
 dist/
 logs/
+crash_log.txt
 deep-research-report (3).md
 data/raw/**
 data/derived/**/*.csv

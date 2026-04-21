@@ -1,7 +1,11 @@
 param(
-    [string]$JavaHome = "C:\Program Files\Java\jdk-24"
+    [string]$JavaHome = ""
 )
 
 $ErrorActionPreference = "Stop"
 
-& "$PSScriptRoot\build-internal-alpha.ps1" -JavaHome $JavaHome
+if ($JavaHome) {
+    & "$PSScriptRoot\build-internal-alpha.ps1" -JavaHome $JavaHome
+} else {
+    & "$PSScriptRoot\build-internal-alpha.ps1"
+}

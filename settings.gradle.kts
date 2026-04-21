@@ -26,6 +26,7 @@ include(
     ":core:storage",
     ":engine:api",
     ":engine:singbox",
+    ":jointtesthost",
     ":security:audit",
     ":trafficprobe",
     ":tools:ingest",

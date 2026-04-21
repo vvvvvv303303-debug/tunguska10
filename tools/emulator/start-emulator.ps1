@@ -11,9 +11,11 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$sdkRoot = "C:\Users\vladi\AppData\Local\Android\Sdk"
+. "$PSScriptRoot\..\common\PathTools.ps1"
+
+$sdkRoot = Get-AndroidSdkRoot
 $emulator = Join-Path $sdkRoot "emulator\emulator.exe"
-$adb = Join-Path $sdkRoot "platform-tools\adb.exe"
+$adb = Get-AdbPath
 $avdConfig = Join-Path $env:USERPROFILE ".android\avd\$AvdName.avd\config.ini"
 
 if (-not (Test-Path $emulator)) {

@@ -1,7 +1,7 @@
 param(
     [string]$ShareLink = "",
     [string]$ExpectedPhase = "RUNNING",
-    [string]$JavaHome = "C:\Program Files\Java\jdk-24",
+    [string]$JavaHome = "",
     [string]$AvdName = "tunguska-api34",
     [switch]$Headless,
     [switch]$NoHardReset,
@@ -21,9 +21,12 @@ param(
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\\..")).Path
 $diagnosticsRemotePath = "files/tunguska-smoke"
-$androidHome = "C:\Users\vladi\AppData\Local\Android\Sdk"
-$adb = "$androidHome\platform-tools\adb.exe"
 . "$PSScriptRoot\UiAutomatorTools.ps1"
+$adb = Get-AdbPath
+
+if (-not $JavaHome) {
+    $JavaHome = Get-DefaultJavaHome
+}
 
 function Assert-EmulatorOnline {
     $deviceList = (& $adb devices) -join "`n"
@@ -108,7 +111,9 @@ try {
     if (-not $SkipInstall) {
         Assert-EmulatorOnline
         Write-Host "Phase: install Tunguska + tests + trafficprobe"
-        $env:JAVA_HOME = $JavaHome
+        if ($JavaHome) {
+            $env:JAVA_HOME = $JavaHome
+        }
         & .\gradlew.bat `
             :app:installDebug `
             :app:installDebugAndroidTest `

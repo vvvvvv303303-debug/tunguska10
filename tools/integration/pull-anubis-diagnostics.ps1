@@ -1,11 +1,15 @@
 param(
     [string]$RemotePath = "files/anubis-smoke",
-    [string]$OutputRoot = "C:\src\tunguska\logs"
+    [string]$OutputRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot\..\emulator\UiAutomatorTools.ps1"
 $adb = Get-AdbPath
+
+if (-not $OutputRoot) {
+    $OutputRoot = Get-LogsRoot
+}
 
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $destination = Join-Path $OutputRoot "anubis-smoke-$timestamp"

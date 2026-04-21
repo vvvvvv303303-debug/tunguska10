@@ -117,16 +117,25 @@ class ProbeActivity : Activity() {
     }
 
     private fun fetchPublicIp(endpoint: String): String {
+        System.setProperty("http.keepAlive", "false")
         val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
             connectTimeout = 8_000
             readTimeout = 8_000
             requestMethod = "GET"
             instanceFollowRedirects = true
+            useCaches = false
+            setRequestProperty("Connection", "close")
+            setRequestProperty("Cache-Control", "no-cache")
+            setRequestProperty("Pragma", "no-cache")
         }
-        return connection.inputStream.bufferedReader().use { reader ->
-            reader.readText().trim().lineSequence().firstOrNull { it.isNotBlank() }.orEmpty().ifBlank {
-                error("Probe endpoint returned an empty response.")
+        return try {
+            connection.inputStream.bufferedReader().use { reader ->
+                reader.readText().trim().lineSequence().firstOrNull { it.isNotBlank() }.orEmpty().ifBlank {
+                    error("Probe endpoint returned an empty response.")
+                }
             }
+        } finally {
+            connection.disconnect()
         }
     }
 

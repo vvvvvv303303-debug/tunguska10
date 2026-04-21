@@ -1,11 +1,17 @@
 param(
-    [string]$JavaHome = "C:\Program Files\Java\jdk-24"
+    [string]$JavaHome = ""
 )
 
 $ErrorActionPreference = "Stop"
 
-$root = (Resolve-Path (Join-Path $PSScriptRoot "..\\..")).Path
-$distDir = Join-Path $root "dist"
+. "$PSScriptRoot\..\common\PathTools.ps1"
+
+if (-not $JavaHome) {
+    $JavaHome = Get-DefaultJavaHome
+}
+
+$root = Get-RepoRoot
+$distDir = Get-DistDirectory
 
 Push-Location $root
 try {
@@ -42,7 +48,7 @@ try {
     $sha = (Get-FileHash -Algorithm SHA256 $distApk).Hash.ToLowerInvariant()
     Set-Content -Path "$distApk.sha256" -Value "$sha  $(Split-Path -Leaf $distApk)"
 
-    $apksigner = "C:\Users\vladi\AppData\Local\Android\Sdk\build-tools\36.0.0\apksigner.bat"
+    $apksigner = Get-LatestAndroidBuildToolPath -ToolName "apksigner.bat"
     if (Test-Path $apksigner) {
         & $apksigner verify --print-certs $distApk | Set-Content -Path "$distApk.signing.txt"
     }

@@ -1,9 +1,13 @@
 param(
-    [string]$ChromeApkPath = "C:\src\tunguska\tools\browser\chrome.apk"
+    [string]$ChromeApkPath = ""
 )
 
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot\UiAutomatorTools.ps1"
+
+if (-not $ChromeApkPath) {
+    $ChromeApkPath = Get-ChromeApkPath
+}
 
 function Test-ChromeInstalled {
     $packages = Invoke-Adb -Arguments @("shell", "pm", "list", "packages", "com.android.chrome")

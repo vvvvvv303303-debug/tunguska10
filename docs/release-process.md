@@ -18,7 +18,7 @@ Current published release: `v0.2.4`
 
 ## Files To Update
 
-Version changes are made in [app/build.gradle.kts](/C:/src/tunguska/app/build.gradle.kts).
+Version changes are made in [app/build.gradle.kts](../app/build.gradle.kts).
 
 Update:
 
@@ -58,5 +58,5 @@ The `arm64-v8a internal` APK is the primary sideload artifact. The `x86_64 emula
 
 ## Workflow Split
 
-- [ci.yml](/C:/src/tunguska/.github/workflows/ci.yml): build and test on pushes and pull requests
-- [release.yml](/C:/src/tunguska/.github/workflows/release.yml): publish APK assets into GitHub Releases on `v*` tags
+- [.github/workflows/ci.yml](../.github/workflows/ci.yml): build and test on pushes and pull requests
+- [.github/workflows/release.yml](../.github/workflows/release.yml): publish APK assets into GitHub Releases on `v*` tags

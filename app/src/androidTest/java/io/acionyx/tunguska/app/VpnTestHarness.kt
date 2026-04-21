@@ -231,15 +231,9 @@ internal class VpnTestHarness(
     }
 
     fun launchTunguska() {
-        val launchIntent = checkNotNull(
-            appContext.packageManager.getLaunchIntentForPackage(TUNGUSKA_PACKAGE),
-        ) {
-            "Unable to resolve the Tunguska launcher activity."
-        }.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-        appContext.startActivity(launchIntent)
-        assertTrue(
-            "Tunguska did not reach the foreground.",
-            device.wait(Until.hasObject(By.pkg(TUNGUSKA_PACKAGE)), 15_000),
+        launchPackage(
+            packageName = TUNGUSKA_PACKAGE,
+            errorMessage = "Tunguska did not reach the foreground.",
         )
         composeRule.waitUntil(timeoutMillis = 10_000) {
             runCatching {
@@ -335,8 +329,8 @@ internal class VpnTestHarness(
         .getString("expected_phase")
         ?: VpnRuntimePhase.RUNNING.name
 
-    private fun confirmVpnPermissionIfPresent() {
-        val button = device.wait(Until.findObject(By.res("android:id/button1")), 10_000)
+    private fun confirmVpnPermissionIfPresent(timeoutMillis: Long = 10_000) {
+        val button = device.wait(Until.findObject(By.res("android:id/button1")), timeoutMillis)
             ?: device.wait(Until.findObject(By.textContains("Allow")), 2_000)
             ?: device.wait(Until.findObject(By.textContains("OK")), 2_000)
             ?: device.wait(Until.findObject(By.textContains("Continue")), 2_000)
@@ -461,6 +455,16 @@ internal class VpnTestHarness(
             bytes[index] = value.substring(offset, offset + 2).toInt(16).toByte()
         }
         return bytes.toString(Charsets.UTF_8)
+    }
+
+    private fun launchPackage(packageName: String, errorMessage: String) {
+        val launchIntent = checkNotNull(
+            appContext.packageManager.getLaunchIntentForPackage(packageName),
+        ) {
+            "Unable to resolve the launcher activity for $packageName."
+        }.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        appContext.startActivity(launchIntent)
+        assertTrue(errorMessage, device.wait(Until.hasObject(By.pkg(packageName)), 15_000))
     }
 
     private fun launchChrome(url: String) {

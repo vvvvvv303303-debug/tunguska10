@@ -46,8 +46,8 @@ Prepare and validate against:
 
 Helper scripts:
 
-- [prepare-detector-workspace.ps1](/C:/src/tunguska/tools/mvp/prepare-detector-workspace.ps1)
-- [new-validation-report.ps1](/C:/src/tunguska/tools/mvp/new-validation-report.ps1)
+- [tools/mvp/prepare-detector-workspace.ps1](../tools/mvp/prepare-detector-workspace.ps1)
+- [tools/mvp/new-validation-report.ps1](../tools/mvp/new-validation-report.ps1)
 
 ## Validation Flow
 
@@ -79,6 +79,8 @@ If external orchestration is in scope, validate it separately after the standalo
 6. Confirm a real device still shows different public IPs before and after the orchestrated VPN startup.
 7. Confirm stopping through Anubis returns the device to the direct IP.
 8. Keep the real VLESS test fixture outside git and pass it through CLI or `TUNGUSKA_REAL_SHARE_LINK`.
+
+For the local emulator-side joint proof structure and script entry points, see [docs/e2e-testing.md](./e2e-testing.md).
 
 ## Acceptance Notes
 

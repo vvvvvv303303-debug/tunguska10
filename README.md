@@ -90,7 +90,7 @@ Current proof for `v0.2.4`:
 - a headed emulator harness covers import, UI flow, stop, automation control-path, screenshot capture, UI hierarchy capture, and filtered diagnostics
 - the Android VPN permission dialog is completed through UI Automator in the local harness
 - a separate helper app proves full-tunnel, allowlist, and denylist policy behavior in the local test rig
-- a separate headed-emulator Anubis harness proves the control-path `freeze -> start Tunguska -> stop -> refreeze`
+- the neutral-host `jointtesthost` harness proves the combined Tunguska + Anubis control path `freeze -> start Tunguska -> stop -> refreeze`
 - real-device testing has confirmed both live tunnel traffic and a different public IP with VPN enabled than without VPN
 
 The emulator remains useful for UI, orchestration, and dataplane debugging through the dedicated `x86_64` emulator build, while the primary sideload artifact for real devices remains `arm64-v8a`.
@@ -285,7 +285,7 @@ Typical local build:
 
 Local sideload package helper:
 
-- [tools/release/build-internal.ps1](/C:/src/tunguska/tools/release/build-internal.ps1)
+- [tools/release/build-internal.ps1](./tools/release/build-internal.ps1)
 
 ## Repository Guide
 
@@ -293,6 +293,7 @@ Local sideload package helper:
 - [THREAT_MODEL.md](./THREAT_MODEL.md): threat model and residual risks
 - [PRIVACY.md](./PRIVACY.md): privacy and local data handling
 - [SECURITY.md](./SECURITY.md): vulnerability reporting policy
+- [docs/e2e-testing.md](./docs/e2e-testing.md): local emulator, diagnostics, and joint Tunguska + Anubis validation guide
 - [docs/mvp-device-validation.md](./docs/mvp-device-validation.md): detector and real-device validation matrix
 - [docs/anubis-integration.md](./docs/anubis-integration.md): token-gated automation setup for Anubis-style orchestration
 - [docs/release-process.md](./docs/release-process.md): versioning and GitHub Release process

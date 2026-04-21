@@ -1,9 +1,13 @@
 param(
-    [string]$ShizukuApkPath = "C:\src\tunguska\tools\third_party\shizuku.apk"
+    [string]$ShizukuApkPath = ""
 )
 
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot\..\emulator\UiAutomatorTools.ps1"
+
+if (-not $ShizukuApkPath) {
+    $ShizukuApkPath = Get-ShizukuApkPath
+}
 
 function Test-ShizukuInstalled {
     $packages = Invoke-Adb -Arguments @("shell", "pm", "list", "packages", "moe.shizuku.privileged.api")

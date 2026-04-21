@@ -1,8 +1,8 @@
 param(
     [string]$ShareLink = "",
-    [string]$JavaHome = "C:\Program Files\Java\jdk-24",
+    [string]$JavaHome = "",
     [string]$AvdName = "tunguska-api34",
-    [string]$AnubisRepo = "C:\temp\anubis-plan",
+    [string]$AnubisRepo = "",
     [switch]$Headless,
     [switch]$NoHardReset,
     [switch]$SkipInstall,
@@ -12,8 +12,26 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-$androidHome = "C:\Users\vladi\AppData\Local\Android\Sdk"
-$adb = "$androidHome\platform-tools\adb.exe"
+. "$PSScriptRoot\..\common\PathTools.ps1"
+
+$androidHome = Get-AndroidSdkRoot
+$adb = Get-AdbPath
+
+if (-not $JavaHome) {
+    $JavaHome = Get-DefaultJavaHome
+}
+
+if (-not $AnubisRepo) {
+    $siblingAnubisRepo = Join-Path (Split-Path $root -Parent) "anubis"
+    if (Test-Path $siblingAnubisRepo) {
+        $AnubisRepo = (Resolve-Path $siblingAnubisRepo).Path
+    }
+}
+
+if (-not $AnubisRepo -or -not (Test-Path $AnubisRepo)) {
+    $expectedSibling = Join-Path (Split-Path $root -Parent) "anubis"
+    throw "Anubis repo not found. Pass -AnubisRepo or clone it as a sibling repo at $expectedSibling."
+}
 
 function Assert-EmulatorOnline {
     $deviceList = (& $adb devices) -join "`n"
@@ -112,11 +130,15 @@ try {
 
     if (-not $SkipInstall) {
         Assert-EmulatorOnline
-        Write-Host "Phase: install Tunguska + trafficprobe"
-        $env:JAVA_HOME = $JavaHome
+        Write-Host "Phase: install Tunguska + trafficprobe + jointtesthost"
+        if ($JavaHome) {
+            $env:JAVA_HOME = $JavaHome
+        }
         & .\gradlew.bat `
             :app:installDebug `
             :app:installDebugAndroidTest `
+            :jointtesthost:installDebug `
+            :jointtesthost:installDebugAndroidTest `
             :trafficprobe:installDebug `
             --no-daemon `
             --no-build-cache `
@@ -129,6 +151,8 @@ try {
     Assert-EmulatorOnline
     Write-Host "Phase: prepare Tunguska automation fixture"
     & $adb shell am force-stop sgnv.anubis.app
+    & $adb shell pm clear io.acionyx.tunguska | Out-Null
+    & $adb shell pm clear io.acionyx.tunguska.trafficprobe | Out-Null
     & $adb shell cmd package enable io.acionyx.tunguska | Out-Null
     & $adb shell run-as io.acionyx.tunguska rm -rf files/tunguska-smoke | Out-Null
     & $adb shell run-as io.acionyx.tunguska mkdir -p files/tunguska-smoke | Out-Null
@@ -145,7 +169,9 @@ try {
 
     Push-Location $AnubisRepo
     try {
-        $env:JAVA_HOME = $JavaHome
+        if ($JavaHome) {
+            $env:JAVA_HOME = $JavaHome
+        }
         $env:ANDROID_HOME = $androidHome
         $env:ANDROID_SDK_ROOT = $androidHome
 
@@ -154,7 +180,6 @@ try {
             Write-Host "Phase: install Anubis"
             & .\gradlew.bat `
                 :app:installDebug `
-                :app:installDebugAndroidTest `
                 --no-daemon `
                 --no-build-cache `
                 --no-configuration-cache `
@@ -162,23 +187,31 @@ try {
                 "-Dkotlin.incremental=false"
             Assert-LastExitCode "Anubis install"
         }
-
-        Assert-EmulatorOnline
-        Write-Host "Phase: run Anubis Tunguska integration test"
-        & $adb shell run-as sgnv.anubis.app rm -rf files/anubis-smoke | Out-Null
-        & $adb shell run-as sgnv.anubis.app mkdir -p files/anubis-smoke | Out-Null
-        Invoke-CheckedInstrumentation -Step "Anubis integration instrumentation" -Arguments @(
-            "shell", "am", "instrument", "-w", "-r",
-            "-e", "class", "sgnv.anubis.app.TunguskaIntegrationTest",
-            "sgnv.anubis.app.test/androidx.test.runner.AndroidJUnitRunner"
-        )
-        Assert-EmulatorOnline
     }
     finally {
         Pop-Location
     }
 
-    & "tools\integration\pull-anubis-diagnostics.ps1"
+    Assert-EmulatorOnline
+    Write-Host "Phase: run Tunguska Anubis joint UI test"
+    & $adb shell am force-stop sgnv.anubis.app
+    & $adb shell pm clear sgnv.anubis.app | Out-Null
+    & $adb shell pm clear io.acionyx.tunguska.jointtesthost | Out-Null
+    & $adb shell pm clear io.acionyx.tunguska.trafficprobe | Out-Null
+    & $adb shell cmd package enable io.acionyx.tunguska | Out-Null
+    & $adb shell cmd package enable sgnv.anubis.app | Out-Null
+    & $adb shell cmd package enable io.acionyx.tunguska.jointtesthost | Out-Null
+    & $adb shell cmd package enable io.acionyx.tunguska.trafficprobe | Out-Null
+    & $adb shell run-as io.acionyx.tunguska.jointtesthost rm -rf files/tunguska-smoke | Out-Null
+    & $adb shell run-as io.acionyx.tunguska.jointtesthost mkdir -p files/tunguska-smoke | Out-Null
+    Invoke-CheckedInstrumentation -Step "Tunguska Anubis joint UI instrumentation" -Arguments @(
+        "shell", "am", "instrument", "-w", "-r",
+        "-e", "class", "io.acionyx.tunguska.trafficprobe.AnubisJointUiProofTest",
+        "-e", "profile_share_link_hex", $shareLinkHex,
+        "io.acionyx.tunguska.jointtesthost.test/androidx.test.runner.AndroidJUnitRunner"
+    )
+
+    & "tools\emulator\pull-diagnostics.ps1" -AppPackage "io.acionyx.tunguska.jointtesthost"
 }
 finally {
     Pop-Location
