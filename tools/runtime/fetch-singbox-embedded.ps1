@@ -9,6 +9,12 @@ param(
     [string]$GroupId = "io.acionyx.thirdparty",
     [string]$ArtifactId = "libbox-android",
     [string]$Version = "2026.04.22-99e1ffe",
+    [ValidateSet("LocalMaven", "GitHubPackages", "Both")]
+    [string]$PublishTarget = "LocalMaven",
+    [string]$GitHubPackagesOwner = "Acionyx",
+    [string]$GitHubPackagesRepository = "tunguska",
+    [string]$GitHubPackagesUser,
+    [string]$GitHubPackagesToken,
     [switch]$Force
 )
 
@@ -21,12 +27,18 @@ $resolvedSingBoxRepo = if ($SingBoxRepoPath) { $SingBoxRepoPath } else { $defaul
 $resolvedSingGeoIpRepo = if ($SingGeoIpRepoPath) { $SingGeoIpRepoPath } else { $defaultSingGeoIpRepo }
 $mavenRoot = Join-Path $repoRoot ".tmp\maven"
 $groupPath = ($GroupId -split '\.') -join '\'
+$groupPathUrl = ($GroupId -split '\.') -join '/'
 $targetDir = Join-Path $mavenRoot (Join-Path $groupPath (Join-Path $ArtifactId $Version))
 $targetAar = Join-Path $targetDir "$ArtifactId-$Version.aar"
 $targetPom = Join-Path $targetDir "$ArtifactId-$Version.pom"
 $targetMetadata = Join-Path $targetDir "$ArtifactId-$Version.metadata.json"
 $targetRuleSetDir = Join-Path $repoRoot "vpnservice\src\main\assets\singbox\rule-set"
 $targetGeoIpRuRuleSet = Join-Path $targetRuleSetDir "geoip-ru.srs"
+$publisherProjectDir = Join-Path $repoRoot "tools\runtime\libbox-publisher"
+$githubPackagesRepositoryUrl = "https://maven.pkg.github.com/$GitHubPackagesOwner/$GitHubPackagesRepository"
+$githubPackagesPomUrl = "$githubPackagesRepositoryUrl/$groupPathUrl/$ArtifactId/$Version/$ArtifactId-$Version.pom"
+$publishLocalMaven = $PublishTarget -eq "LocalMaven" -or $PublishTarget -eq "Both"
+$publishGitHubPackages = $PublishTarget -eq "GitHubPackages" -or $PublishTarget -eq "Both"
 
 function Resolve-RequiredPath {
     param(
@@ -61,10 +73,15 @@ function Get-ExecutableName {
         [string]$BaseName
     )
 
-    if ($IsWindows) {
+    if ($env:OS -eq "Windows_NT") {
         return "$BaseName.exe"
     }
     return $BaseName
+}
+
+function Get-GradleWrapperPath {
+    $wrapperName = if ($env:OS -eq "Windows_NT") { "gradlew.bat" } else { "gradlew" }
+    return Resolve-RequiredPath -PathValue (Join-Path $repoRoot $wrapperName) -Description "Gradle wrapper"
 }
 
 function Resolve-GoExecutable {
@@ -299,29 +316,6 @@ function Ensure-GomobileTools {
     Invoke-ProcessChecked -FilePath $gomobile -Arguments @("init") -WorkingDirectory $RepoPath
 }
 
-function Write-LibboxPom {
-    param(
-        [string]$PomPath,
-        [string]$PomGroupId,
-        [string]$PomArtifactId,
-        [string]$PomVersion
-    )
-
-    @"
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
-  <modelVersion>4.0.0</modelVersion>
-  <groupId>$PomGroupId</groupId>
-  <artifactId>$PomArtifactId</artifactId>
-  <version>$PomVersion</version>
-  <packaging>aar</packaging>
-  <name>$PomArtifactId</name>
-  <description>Locally published sing-box libbox runtime for Tunguska.</description>
-</project>
-"@ | Set-Content -Path $PomPath -Encoding UTF8
-}
-
 function Build-LibboxAar {
     param(
         [Parameter(Mandatory = $true)]
@@ -375,18 +369,14 @@ function Build-GeoIpRuleSet {
     return Resolve-RequiredPath -PathValue $ruleSetPath -Description "generated geoip-ru rule-set"
 }
 
-function Publish-LibboxAar {
+function Assert-LibboxAarContents {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$ResolvedSourceAar,
-        [Parameter(Mandatory = $true)]
-        [string]$MetadataSource
+        [string]$AarPath
     )
 
-    Copy-Item -Path $ResolvedSourceAar -Destination $targetAar -Force
-
     Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $archive = [System.IO.Compression.ZipFile]::OpenRead($targetAar)
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($AarPath)
     try {
         foreach ($abi in @("arm64-v8a", "x86_64")) {
             $entryName = "jni/$abi/libbox.so"
@@ -398,8 +388,123 @@ function Publish-LibboxAar {
     } finally {
         $archive.Dispose()
     }
+}
 
-    Write-LibboxPom -PomPath $targetPom -PomGroupId $GroupId -PomArtifactId $ArtifactId -PomVersion $Version
+function Resolve-GitHubPackagesCredentials {
+    param(
+        [string]$User,
+        [string]$Token
+    )
+
+    $resolvedUser = if (-not [string]::IsNullOrWhiteSpace($User)) {
+        $User
+    } elseif (-not [string]::IsNullOrWhiteSpace($env:GITHUB_PACKAGES_USER)) {
+        $env:GITHUB_PACKAGES_USER
+    } elseif (-not [string]::IsNullOrWhiteSpace($env:GITHUB_ACTOR)) {
+        $env:GITHUB_ACTOR
+    } else {
+        $null
+    }
+
+    $resolvedToken = if (-not [string]::IsNullOrWhiteSpace($Token)) {
+        $Token
+    } elseif (-not [string]::IsNullOrWhiteSpace($env:GITHUB_PACKAGES_TOKEN)) {
+        $env:GITHUB_PACKAGES_TOKEN
+    } elseif (-not [string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
+        $env:GITHUB_TOKEN
+    } else {
+        $null
+    }
+
+    if ([string]::IsNullOrWhiteSpace($resolvedUser) -or [string]::IsNullOrWhiteSpace($resolvedToken)) {
+        throw (
+            "GitHub Packages publishing requires credentials. Set GitHubPackagesUser/GitHubPackagesToken, " +
+            "or GITHUB_PACKAGES_USER/GITHUB_PACKAGES_TOKEN to a classic PAT with write:packages."
+        )
+    }
+
+    return @{
+        User = $resolvedUser
+        Token = $resolvedToken
+    }
+}
+
+function Test-RemoteMavenArtifactExists {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PomUrl,
+        [Parameter(Mandatory = $true)]
+        [string]$User,
+        [Parameter(Mandatory = $true)]
+        [string]$Token
+    )
+
+    $authBytes = [System.Text.Encoding]::ASCII.GetBytes("${User}:${Token}")
+    $headers = @{
+        Authorization = "Basic $([Convert]::ToBase64String($authBytes))"
+    }
+
+    try {
+        $response = Invoke-WebRequest -Uri $PomUrl -Method Head -Headers $headers
+        return $response.StatusCode -eq 200
+    } catch [System.Net.WebException] {
+        $statusCode = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { $null }
+        if ($statusCode -eq 404) {
+            return $false
+        }
+        if ($statusCode -in @(401, 403)) {
+            throw (
+                "GitHub Packages rejected the credential for '$PomUrl'. " +
+                "Use a classic PAT with read:packages to query existing versions and write:packages to publish."
+            )
+        }
+        throw
+    }
+}
+
+function Invoke-LibboxPublisher {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ResolvedSourceAar,
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryUrl,
+        [string]$RepositoryUser,
+        [string]$RepositoryPassword
+    )
+
+    Assert-LibboxAarContents -AarPath $ResolvedSourceAar
+
+    $gradleWrapper = Get-GradleWrapperPath
+    $args = @(
+        "-p", $publisherProjectDir,
+        "publishLibboxPublicationToTargetRepository",
+        "--no-configuration-cache",
+        "-PlibboxAarPath=$ResolvedSourceAar",
+        "-PlibboxGroupId=$GroupId",
+        "-PlibboxArtifactId=$ArtifactId",
+        "-PlibboxVersion=$Version",
+        "-PlibboxPomName=$ArtifactId",
+        "-PlibboxPomDescription=Pinned sing-box libbox Android runtime for Tunguska.",
+        "-PpublishRepositoryUrl=$RepositoryUrl"
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($RepositoryUser)) {
+        if ([string]::IsNullOrWhiteSpace($RepositoryPassword)) {
+            throw "RepositoryPassword is required when RepositoryUser is set."
+        }
+        $args += "-PpublishRepositoryUser=$RepositoryUser"
+        $args += "-PpublishRepositoryPassword=$RepositoryPassword"
+    }
+
+    Invoke-ProcessChecked -FilePath $gradleWrapper -Arguments $args -WorkingDirectory $repoRoot
+}
+
+function Write-LibboxLocalMetadata {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$MetadataSource
+    )
+
     @"
 {
   "groupId": "$GroupId",
@@ -409,23 +514,86 @@ function Publish-LibboxAar {
   "publishedAtUtc": "$([DateTime]::UtcNow.ToString("o"))"
 }
 "@ | Set-Content -Path $targetMetadata -Encoding UTF8
+}
+
+function Publish-LibboxToLocalMaven {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ResolvedSourceAar,
+        [Parameter(Mandatory = $true)]
+        [string]$MetadataSource
+    )
+
+    New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+    Invoke-LibboxPublisher -ResolvedSourceAar $ResolvedSourceAar -RepositoryUrl $mavenRoot
+    Write-LibboxLocalMetadata -MetadataSource $MetadataSource
+
+    $publishedAar = Resolve-RequiredPath -PathValue $targetAar -Description "published local libbox AAR"
+    Resolve-RequiredPath -PathValue $targetPom -Description "published local libbox POM" | Out-Null
+    Assert-LibboxAarContents -AarPath $publishedAar
 
     Write-Host "Published libbox AAR to $targetAar"
     Write-Host "Published libbox POM to $targetPom"
 }
 
-New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+function Publish-LibboxToGitHubPackages {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ResolvedSourceAar,
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Credentials
+    )
+
+    Invoke-LibboxPublisher `
+        -ResolvedSourceAar $ResolvedSourceAar `
+        -RepositoryUrl $githubPackagesRepositoryUrl `
+        -RepositoryUser $Credentials.User `
+        -RepositoryPassword $Credentials.Token
+
+    Write-Host "Published ${GroupId}:${ArtifactId}:${Version} to $githubPackagesRepositoryUrl"
+}
+
+$githubCredentials = $null
+$remotePackageReady = $false
+if ($publishGitHubPackages) {
+    $githubCredentials = Resolve-GitHubPackagesCredentials -User $GitHubPackagesUser -Token $GitHubPackagesToken
+    if (-not $Force) {
+        $remotePackageReady = Test-RemoteMavenArtifactExists `
+            -PomUrl $githubPackagesPomUrl `
+            -User $githubCredentials.User `
+            -Token $githubCredentials.Token
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $targetRuleSetDir | Out-Null
 
-if ((Test-Path $targetAar) -and (Test-Path $targetPom) -and (Test-Path $targetGeoIpRuRuleSet) -and -not $Force) {
-    Write-Host "Sing-box embedded artifacts already exist in .tmp/maven and assets. Re-run with -Force to rebuild and overwrite them."
+$localPackageReady = (Test-Path $targetAar) -and (Test-Path $targetPom)
+$ruleSetReady = Test-Path $targetGeoIpRuRuleSet
+
+if (
+    -not $Force -and
+    (-not $publishLocalMaven -or $localPackageReady) -and
+    (-not $publishGitHubPackages -or $remotePackageReady) -and
+    $ruleSetReady
+) {
+    Write-Host "Sing-box embedded artifacts already satisfy '$PublishTarget'. Re-run with -Force to rebuild and overwrite them."
     exit 0
 }
 
 $resolvedSource = if ($SourceAarPath) {
     Resolve-RequiredPath -PathValue $SourceAarPath -Description "libbox AAR"
+} elseif ((Test-Path $targetAar) -and -not $Force) {
+    Resolve-RequiredPath -PathValue $targetAar -Description "cached local libbox AAR"
 } else {
     Build-LibboxAar -RepoPath $resolvedSingBoxRepo -RepoUrl $SingBoxRepoUrl -RepoRef $SingBoxRef
+}
+
+$metadataSource = if ($SourceAarPath) {
+    "aar:$resolvedSource"
+} elseif ([System.StringComparer]::OrdinalIgnoreCase.Equals($resolvedSource, $targetAar)) {
+    "local:$resolvedSource"
+} else {
+    "repo:$resolvedSingBoxRepo@$SingBoxRef"
 }
 
 $resolvedGeoIpRuRuleSet = if ($GeoIpRuRuleSetPath) {
@@ -436,13 +604,20 @@ $resolvedGeoIpRuRuleSet = if ($GeoIpRuRuleSetPath) {
     Build-GeoIpRuleSet -RepoPath $resolvedSingGeoIpRepo -RepoUrl $SingGeoIpRepoUrl
 }
 
-if ((-not (Test-Path $targetAar)) -or (-not (Test-Path $targetPom)) -or $Force) {
-    $metadataSource = if ($SourceAarPath) {
-        "aar:$resolvedSource"
+if ($publishLocalMaven) {
+    if ($localPackageReady -and -not $Force) {
+        Write-Host "Reusing existing local libbox Maven package at $targetDir"
     } else {
-        "repo:$resolvedSingBoxRepo"
+        Publish-LibboxToLocalMaven -ResolvedSourceAar $resolvedSource -MetadataSource $metadataSource
     }
-    Publish-LibboxAar -ResolvedSourceAar $resolvedSource -MetadataSource $metadataSource
+}
+
+if ($publishGitHubPackages) {
+    if ($remotePackageReady -and -not $Force) {
+        Write-Host "GitHub Packages already contains ${GroupId}:${ArtifactId}:${Version}"
+    } else {
+        Publish-LibboxToGitHubPackages -ResolvedSourceAar $resolvedSource -Credentials $githubCredentials
+    }
 }
 
 if ((-not (Test-Path $targetGeoIpRuRuleSet)) -or $Force) {

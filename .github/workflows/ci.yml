@@ -11,8 +11,12 @@ permissions: {}
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      GITHUB_PACKAGES_USER: ${{ github.actor }}
+      GITHUB_PACKAGES_TOKEN: ${{ github.token }}
     permissions:
       contents: read
+      packages: read
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654
@@ -20,10 +24,6 @@ jobs:
           distribution: temurin
           java-version: "17"
           cache: gradle
-      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00
-        with:
-          go-version: "1.24.7"
-          cache: false
       - name: Install Android SDK Packages
         run: |
           SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
@@ -31,9 +31,6 @@ jobs:
           "${SDKMANAGER}" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
       - name: Ensure Gradle Wrapper Is Executable
         run: chmod +x gradlew
-      - name: Bootstrap Embedded Sing-Box Runtime
-        shell: pwsh
-        run: ./tools/runtime/fetch-singbox-embedded.ps1
       - name: Verify JVM and Android Build
         run: ./gradlew test :vpnservice:testDebugUnitTest :app:assembleDebug :app:assembleInternal --no-configuration-cache
       - name: Prepare ABI-Specific APK Assets

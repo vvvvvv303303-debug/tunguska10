@@ -31,9 +31,6 @@ import io.nekohasekai.libbox.ExchangeContext
 import io.nekohasekai.libbox.InterfaceUpdateListener
 import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.libbox.LocalDNSTransport
-import io.nekohasekai.libbox.NeighborEntry
-import io.nekohasekai.libbox.NeighborEntryIterator
-import io.nekohasekai.libbox.NeighborUpdateListener
 import io.nekohasekai.libbox.NetworkInterface as LibboxNetworkInterface
 import io.nekohasekai.libbox.NetworkInterfaceIterator
 import io.nekohasekai.libbox.Notification
@@ -243,13 +240,6 @@ private class LibboxSingboxRuntime(
         }
     }
 
-    override fun triggerNativeCrash() {
-        Thread {
-            Thread.sleep(200)
-            throw RuntimeException("debug native crash")
-        }.start()
-    }
-
     override fun writeDebugMessage(message: String) {
         Log.i(TAG, message)
         VpnRuntimeStore.recordRuntimeTelemetry(
@@ -336,7 +326,6 @@ private class SingboxPlatformInterface(
     private var tunDescriptor: ParcelFileDescriptor? = null
     private var defaultNetworkCallback: ConnectivityManager.NetworkCallback? = null
     private var defaultInterfaceListener: InterfaceUpdateListener? = null
-    private var neighborUpdateListener: NeighborUpdateListener? = null
     private var systemProxyAvailable: Boolean = false
     private var systemProxyEnabled: Boolean = false
 
@@ -571,23 +560,6 @@ private class SingboxPlatformInterface(
         }
     }
 
-    override fun startNeighborMonitor(listener: NeighborUpdateListener) {
-        synchronized(lock) {
-            neighborUpdateListener = listener
-        }
-        listener.updateNeighborTable(EmptyNeighborEntryIterator)
-    }
-
-    override fun registerMyInterface(name: String) = Unit
-
-    override fun closeNeighborMonitor(listener: NeighborUpdateListener) {
-        synchronized(lock) {
-            if (neighborUpdateListener === listener || neighborUpdateListener == null) {
-                neighborUpdateListener = null
-            }
-        }
-    }
-
     override fun getInterfaces(): NetworkInterfaceIterator {
         val networkInterfaces = runCatching {
             NetworkInterface.getNetworkInterfaces()?.let { Collections.list(it) }.orEmpty()
@@ -696,7 +668,6 @@ private class SingboxPlatformInterface(
         closeTun()
         val callback = synchronized(lock) {
             defaultInterfaceListener = null
-            neighborUpdateListener = null
             val snapshot = defaultNetworkCallback
             defaultNetworkCallback = null
             snapshot
@@ -963,12 +934,6 @@ private class SimpleNetworkInterfaceIterator(
     override fun next(): LibboxNetworkInterface = iterator.next()
 }
 
-private object EmptyNeighborEntryIterator : NeighborEntryIterator {
-    override fun hasNext(): Boolean = false
-
-    override fun next(): NeighborEntry = error("Neighbor table is empty.")
-}
-
 private class SimpleStringIterator(values: Iterable<String>) : StringIterator {
     private val snapshot: List<String> = values.toList()
     private val iterator: Iterator<String> = snapshot.iterator()
@@ -985,7 +950,7 @@ private object SingboxBinaryLocator {
         val libDir = File(context.applicationInfo.nativeLibraryDir)
         val box = File(libDir, "libbox.so")
         require(box.isFile) {
-            "Missing libbox.so under ${libDir.absolutePath}. Publish libbox into .tmp/maven with tools/runtime/fetch-singbox-embedded.ps1 before building."
+            "Missing libbox.so under ${libDir.absolutePath}. Resolve libbox-android from GitHub Packages or publish a local override with tools/runtime/fetch-singbox-embedded.ps1 before building."
         }
         return box
     }
