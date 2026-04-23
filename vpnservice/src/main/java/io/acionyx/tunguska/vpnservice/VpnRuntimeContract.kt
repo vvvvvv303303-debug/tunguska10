@@ -12,8 +12,10 @@ object VpnRuntimeContract {
     const val MSG_STAGE_PLAN: Int = 2
     const val MSG_START_RUNTIME: Int = 3
     const val MSG_STOP_RUNTIME: Int = 4
+    const val MSG_PROBE_EGRESS_IP: Int = 5
     const val MSG_STATUS: Int = 100
     const val MSG_ERROR: Int = 101
+    const val MSG_EGRESS_IP: Int = 102
 
     private const val KEY_CONFIG_HASH = "config_hash"
     private const val KEY_ALLOWED_PACKAGES = "allowed_packages"
@@ -68,6 +70,10 @@ object VpnRuntimeContract {
     private const val KEY_SESSION_WORKSPACE_PATH = "session_workspace_path"
     private const val KEY_LAST_ERROR = "last_error"
     private const val KEY_ERROR_MESSAGE = "error_message"
+    private const val KEY_EGRESS_IP_STATUS = "egress_ip_status"
+    private const val KEY_EGRESS_IP_PUBLIC_IP = "egress_ip_public_ip"
+    private const val KEY_EGRESS_IP_OBSERVED_AT = "egress_ip_observed_at"
+    private const val KEY_EGRESS_IP_SUMMARY = "egress_ip_summary"
 
     fun statusMessage(snapshot: VpnRuntimeSnapshot): Message = Message.obtain(null, MSG_STATUS).apply {
         data = encodeSnapshot(snapshot)
@@ -77,6 +83,10 @@ object VpnRuntimeContract {
         data = encodeSnapshot(snapshot).apply {
             putString(KEY_ERROR_MESSAGE, message)
         }
+    }
+
+    fun egressIpMessage(observation: RuntimeEgressIpObservation): Message = Message.obtain(null, MSG_EGRESS_IP).apply {
+        data = encodeEgressIpObservation(observation)
     }
 
     fun stageRuntimeMessage(request: StagedRuntimeRequest, replyTo: Messenger): Message = Message.obtain(null, MSG_STAGE_PLAN).apply {
@@ -276,6 +286,22 @@ object VpnRuntimeContract {
     )
 
     fun decodeError(bundle: Bundle): String? = bundle.getString(KEY_ERROR_MESSAGE)
+
+    fun encodeEgressIpObservation(observation: RuntimeEgressIpObservation): Bundle = Bundle().apply {
+        putString(KEY_EGRESS_IP_STATUS, observation.status.name)
+        putString(KEY_EGRESS_IP_PUBLIC_IP, observation.publicIp)
+        putLong(KEY_EGRESS_IP_OBSERVED_AT, observation.observedAtEpochMs)
+        putString(KEY_EGRESS_IP_SUMMARY, observation.summary)
+    }
+
+    fun decodeEgressIpObservation(bundle: Bundle): RuntimeEgressIpObservation = RuntimeEgressIpObservation(
+        status = bundle.getString(KEY_EGRESS_IP_STATUS)
+            ?.let(RuntimeEgressIpObservationStatus::valueOf)
+            ?: RuntimeEgressIpObservationStatus.UNAVAILABLE,
+        publicIp = bundle.getString(KEY_EGRESS_IP_PUBLIC_IP),
+        observedAtEpochMs = bundle.getLong(KEY_EGRESS_IP_OBSERVED_AT, System.currentTimeMillis()),
+        summary = bundle.getString(KEY_EGRESS_IP_SUMMARY),
+    )
 
     internal fun encodeRuntimeAssets(runtimeAssets: List<CompiledRuntimeAsset>): Array<String> = runtimeAssets
         .map(CompiledRuntimeAsset::relativePath)

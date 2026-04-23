@@ -1,283 +1,171 @@
 # Tunguska
 
-Tunguska is an Android VPN client for VLESS + REALITY profiles with a security-first runtime, staged profile import, per-app split routing, and fail-closed behavior.
+Tunguska is an Android VPN client for VLESS + REALITY profiles. It focuses on safe profile import, explicit routing policy, encrypted local state, a selectable embedded runtime strategy, and fail-closed behavior when runtime assumptions are violated.
 
+The checked-in Android app version is `0.4.0`.
 
-## Product Scope
+## Product Shape
 
-Tunguska currently focuses on one path:
+The app is organized around four top-level sections:
 
-- import a profile from a share link or QR code
-- validate and preview the normalized profile
-- save it into encrypted local storage
-- keep routing intent explicit, including regional bypass defaults
-- obtain Android VPN permission
-- connect, monitor runtime health, and stop cleanly
-- export encrypted backup or redacted diagnostics when needed
-- optionally expose a token-gated automation bridge for external orchestrators such as Anubis
+- Home: protection state, active profile, routing summary, connect/disconnect, and current or exit IP.
+- Profiles: one sealed active profile plus import/replace flow.
+- Routing: traffic policy, Russia direct regional bypass, custom direct domains, and offline route test.
+- Security: security posture, backup export, audit export, automation, and advanced diagnostics.
 
-The app contains subscription and notification code from earlier iterations, but that surface is frozen and secondary. It is not the primary product path.
-
-## First Screen
-
-The first screen is intentionally product-first:
-
-- primary status and `Connect` / `Stop` actions are visible before secondary controls
-- staged import, QR scan, and diagnostics stay on one screen
-- advanced and frozen secondary surfaces are still available, but collapsed out of the default path
-- compact layout rules keep the first screen usable down to `320dp` width without broken wrapping or clipped primary actions
+Technical controls remain available, but they are no longer the primary screen. Runtime strategy selection, restage, refresh runtime, storage details, build surface, and tunnel plan live under Security -> Advanced diagnostics.
 
 ## Supported Platform
 
 - Android `8.0+` (`minSdk 26`)
-- Published device ABI: `arm64-v8a`
-- Published emulator ABI: `x86_64`
+- Build target SDK `36`
+- Primary sideload ABI: `arm64-v8a`
+- Local emulator ABI: `x86_64`
 
-## Supported Connection Formats
+## Supported Profile Inputs
 
-Tunguska currently accepts:
+Tunguska accepts:
 
 - `vless://` REALITY share links
-- `ess://` share links when they map cleanly to the same VLESS + REALITY model
-- canonical JSON `ProfileIr` imports
+- `ess://` links when they normalize to the same VLESS + REALITY model
+- canonical JSON `ProfileIr`
 
-The accepted runtime subset is intentionally narrow:
+Supported protocol subset:
 
-- transport: `tcp`
-- security: `reality`
-- encryption: omitted or `none`
-- `sni` or `serverName` is required
-- `pbk` or `publicKey` is required
-- `sid` or `shortId` is required
-- `flow=xtls-rprx-vision` is accepted when present
-- `spx` or `spiderX` is accepted when present
+- VLESS outbound
+- TCP transport
+- REALITY security
+- `encryption=none` or omitted
+- required `sni` / `serverName`
+- required `pbk` / `publicKey`
+- required `sid` / `shortId`
+- optional `flow=xtls-rprx-vision`
+- optional `spx` / `spiderX`, preserved as shared outbound semantics
 
-Unsupported extra URI parameters are treated as warnings and ignored. Imports are staged first, then explicitly confirmed by the user before being written to storage.
+Unsupported URI parameters are warnings unless they would weaken the security model. Unsafe import flags, debug endpoints, and compatibility localhost proxy settings are rejected.
 
-## Import And QR Flow
+## Import Flow
 
-The first screen is centered on import and connection control.
+Import is always staged:
 
-- Manual paste: user pastes a share link or JSON profile, validates it, reviews the normalized preview, then confirms import.
-- Camera QR: live scan uses CameraX plus on-device ML Kit barcode decoding.
-- Image QR: the app uses the Android photo picker and decodes locally, without broad storage permissions.
+1. Paste, scan camera QR, or scan an image QR.
+2. Validate locally.
+3. Review the normalized profile.
+4. Confirm import before storage changes.
 
-The app does not auto-connect after import. Import and connection remain separate actions.
+The app does not auto-connect after import. Importing and connecting are separate user decisions.
 
 ## Runtime Architecture
 
-Tunguska uses a split app/runtime design.
+Tunguska uses a split app/runtime design:
 
-- `:app` process: UI, encrypted storage, profile import, QR handling, route preview, redacted exports
-- `:vpnservice` isolated process: Binder control service, `VpnService`, runtime session, health monitoring, listener audit
+- `:app`: Compose UI, import, encrypted storage, route test, exports, automation relay.
+- `:vpnservice`: Android `VpnService`, Binder control, runtime session, health monitoring, exposure check, and egress IP probe.
 
-The active MVP runtime lane is `xray+tun2socks`.
+The user-facing runtime selector supports:
 
-- Android `VpnService` owns the TUN interface
-- the packaged Xray executable comes from the Linux release lane because it carries real traffic reliably in the Android app sandbox for the current MVP path
-- the runtime uses a loopback-only authenticated TCP-only SOCKS bridge as an internal implementation detail
-- the bridge binds only to `127.0.0.1`
-- the bridge uses a random high port and random credentials per session
-- UDP association is disabled on the bridge
-- management APIs, debug endpoints, and pprof-style listeners are not enabled in the active lane
-- `geoip.dat` and `geosite.dat` are staged into the runtime workspace from the pinned Xray asset set
+- `XRAY_TUN2SOCKS`: xray plus tun2socks runtime.
+- `SINGBOX_EMBEDDED`: sing-box/libbox embedded runtime.
 
-## Functional Validation
+Both lanes consume the same stored profile and routing model. The selector changes the runtime implementation; it does not create a second profile store or a separate automation path.
 
-Tunguska does not treat `RUNNING` as success on its own.
+## sing-box Dependency
 
-Current proof for `v0.2.4`:
+`libbox-android` is consumed as a Maven dependency:
 
-- a headed emulator harness covers import, UI flow, stop, automation control-path, screenshot capture, UI hierarchy capture, and filtered diagnostics
-- the Android VPN permission dialog is completed through UI Automator in the local harness
-- a separate helper app proves full-tunnel, allowlist, and denylist policy behavior in the local test rig
-- the neutral-host `jointtesthost` harness proves the combined Tunguska + Anubis control path `freeze -> start Tunguska -> stop -> refreeze`
-- real-device testing has confirmed both live tunnel traffic and a different public IP with VPN enabled than without VPN
+- group: `io.acionyx.thirdparty`
+- artifact: `libbox-android`
+- version: see `gradle/libs.versions.toml`
+- default remote: GitHub Packages for this repository
+- local override: `.tmp/maven`
 
-The emulator remains useful for UI, orchestration, and dataplane debugging through the dedicated `x86_64` emulator build, while the primary sideload artifact for real devices remains `arm64-v8a`.
+The refresh script can rebuild the pinned AAR from upstream sing-box and publish to local Maven, GitHub Packages, or both:
 
-## Split Routing
+```powershell
+.\tools\runtime\fetch-singbox-embedded.ps1 -PublishTarget LocalMaven
+.\tools\runtime\fetch-singbox-embedded.ps1 -PublishTarget GitHubPackages
+.\tools\runtime\fetch-singbox-embedded.ps1 -PublishTarget Both
+```
 
-Tunguska supports three routing modes:
+The sing-box lane also stages `vpnservice/src/main/assets/singbox/rule-set/geoip-ru.srs` for GeoIP-based Russia direct behavior.
+
+## Routing
+
+Tunguska supports:
 
 - full tunnel
-- allowlist
-- denylist
+- app allowlist
+- app denylist
+- generated regional direct rules
+- explicit direct/proxy/block rules
 
-Split routing is enforced through `VpnService.Builder` package policy, not only through UI state. The app package itself is excluded from the tunnel when required by the runtime lane. Loopback traffic is kept local by design.
+Russia direct is the built-in regional preset. It covers Russian domain zones and Russian GeoIP rules, including `.ru`, `.su`, Cyrillic RF TLD via `xn--p1ai`, and `geoip:ru`.
 
-The UI also exposes a deterministic route preview so the user can inspect how a destination would be handled before connecting.
+Rule precedence:
 
-## Regional Bypass
+1. Android per-app VPN policy.
+2. Explicit `BLOCK`.
+3. Generated regional `DIRECT`.
+4. Explicit `DIRECT` / `PROXY`.
+5. Default route.
 
-Tunguska also exposes a higher-level regional bypass layer above the ordinary route-rule list.
+Custom direct domains are suffix rules. Adding `example.com` applies to `example.com` and subdomains such as `api.example.com`.
 
-- shipping scope in the current release is `RU First`
-- new and newly imported profiles default to `Russia direct`
-- existing encrypted profiles are not silently changed; the app asks once whether to enable the preset
+Route test is an offline policy simulation. It does not send traffic and does not require the VPN to be connected. Its job is to answer whether a draft destination would use the VPN, go direct, or be blocked by the current policy.
 
-The default `RU+` preset expands to:
+## Security Posture
 
-- `.ru`
-- `.su`
-- `.рф` / `xn--p1ai`
-- `geoip:ru`
+Tunguska treats these as security-critical:
 
-Rule precedence is fixed:
+- no unauthenticated localhost proxy surface
+- no enabled xray or sing-box management API
+- no debug listener in release paths
+- no raw profile secrets in diagnostics
+- fail-closed behavior on real runtime violations
+- explicit token gating for automation
 
-- split-tunnel package policy
-- explicit `BLOCK`
-- generated regional `DIRECT`
-- explicit `DIRECT` / `PROXY`
-- default action
+The runtime exposure check has two confidence levels:
 
-This keeps the behavior predictable:
+- Full listener audit when Android allows process socket inventory reads.
+- Limited topology check when Android SELinux restricts `/proc/net` socket inventory for app-sandboxed VPN processes.
 
-- Russian destinations stay direct by default
-- explicit block rules can still override them
-- explicit direct/proxy rules still work after the regional layer
+Limited does not mean the app is broken. It means Android blocked low-level socket enumeration, so Tunguska reports declared runtime topology instead of pretending the audit fully ran.
 
-The first screen keeps the UX simple:
+## Egress IP Display
 
-- one `Russia direct` switch
-- one `Configure` action for advanced settings
+Home shows:
 
-The advanced area adds:
+- current external IP while idle
+- exit IP while connected
+- detecting state while probes are running
+- a clear fallback state when all probes fail
 
-- `Always direct domains`
-- a route preview for host or IP input
-- a short explanation of precedence
+Connected exit-IP checks are routed through the active engine path where supported so the UI reports the tunnel egress rather than the app process's direct network path.
 
-When a result depends on runtime geodata rather than a plain hostname suffix, the preview shows an explicit runtime hint instead of pretending it has already resolved destination IP classification ahead of time.
+## Exports
 
-## DNS Behavior
+Security exports are local and explicit:
 
-Profiles imported from `vless://` or `ess://` share links default to `SystemDns` unless the user imports an explicit JSON profile with a different DNS policy.
+- encrypted full-profile backup
+- encrypted redacted diagnostic/audit bundle
 
-- this avoids broken DoH-over-IP defaults such as `https://1.1.1.1/dns-query`
-- legacy stored profiles using the old built-in DoH-over-IP defaults are migrated on load to `SystemDns`
-- custom JSON profiles can still carry explicit encrypted DNS settings
+After a successful export, Tunguska launches Android's share sheet with a `FileProvider` content URI. Backup and audit export states are independent; clicking one export cannot mutate the other card's status.
 
-## Self-Audit And Fail-Closed Behavior
+## Automation
 
-The runtime continuously checks that its own security assumptions still hold.
+Automation is opt-in and intended for orchestrators such as Anubis:
 
-### Listener self-audit
+- disabled by default
+- token-gated
+- rotatable token
+- explicit exported activity, not an open broadcast receiver
+- uses the same stored profile and Binder-backed runtime path as the UI
 
-The listener auditor reads `/proc/net/tcp` and `/proc/net/tcp6`, filters sockets to the current app UID, and rejects forbidden listeners.
-
-Allowed case:
-
-- the single authenticated loopback bridge expected for the active runtime session
-
-Forbidden cases:
-
-- unexpected loopback listeners
-- wildcard listeners
-- any management or debug exposure reachable from outside the intended private runtime path
-
-If a forbidden listener is detected, Tunguska fails closed and tears down the VPN session.
-
-### Session watchdog
-
-The runtime also probes engine health while connected.
-
-- healthy session: runtime remains active
-- failed health probe: runtime is stopped and the VPN is torn down
-
-This keeps the product aligned with the core rule: connection failures should not silently degrade into a leaky or ambiguous state.
-
-## Storage And Diagnostics
-
-Profiles and artifacts are stored in app-private encrypted form.
-
-- profile storage: encrypted `ProfileIr`
-- backup export: encrypted full-profile envelope
-- diagnostic export: redacted encrypted bundle with hashes, runtime status, storage state, and route-preview context
-
-Diagnostics are designed to be useful without dumping raw secrets into user-visible files.
-
-Regional bypass state is included in redacted form:
-
-- enabled preset ids
-- custom direct-domain count
-- generated regional-rule count
-- route-preview runtime dataset hints
-
-Automation state is also included in redacted form:
-
-- whether external automation is enabled
-- whether `VpnService` permission is already satisfied
-- last automation status and error
-- last caller hint
-- encrypted app-private status storage
-
-The automation token itself is not exported.
-
-## Automation Integration
-
-Tunguska also exposes an opt-in automation path intended for orchestrators such as Anubis.
-
-- the API is disabled by default
-- the entrypoint is an explicit exported activity, not an open broadcast receiver
-- every request requires the current automation token
-- the token is rotatable and stored in encrypted app-private storage
-- the token is not written into diagnostic exports
-- the app must already have Android VPN permission before external automation can start the runtime
-
-Operationally, the automation bridge always uses the current sealed Tunguska profile. It does not introduce a second profile slot or a separate runtime configuration path.
-
-The current shell contract is:
-
-- `io.acionyx.tunguska.action.AUTOMATION_START`
-- `io.acionyx.tunguska.action.AUTOMATION_STOP`
-- required extra: `automation_token`
-
-Detailed setup notes are in [docs/anubis-integration.md](./docs/anubis-integration.md).
-
-## Security Properties
-
-Current security properties in the shipped code:
-
-- no telemetry by default
-- no cleartext traffic allowed by app network policy
-- no unauthenticated localhost proxy in the active runtime lane
-- no enabled Xray or sing-box management API in the active runtime lane
-- no open broadcast control surface for external automation
-- exported automation control is opt-in and token-gated
-- automation status metadata is sealed into encrypted app-private storage
-- no deep-link import path enabled by default
-- no release-path claim of VPN invisibility
-- no silent migration of existing stored profiles into `RU direct`
-
-## Current Limitations
-
-- The current release is not Play-signed or store-distributed.
-- The active runtime uses an authenticated internal loopback bridge rather than a pure no-loopback embedded transport.
-- Server-side Xray blocking is only complementary. If the client intentionally routes a destination direct, the server will never see that traffic.
-- The full physical-device detector matrix is still pending. Functional traffic has been confirmed on a real phone, and local headed-emulator dataplane proof now uses the dedicated `x86_64` emulator APK rather than ARM translation.
-- Generic VPN visibility such as `TRANSPORT_VPN`, foreground notification presence, and `tun0` visibility is not treated as a defect by itself.
-
-## Releases
-
-Installable APKs are available from GitHub Releases and from GitHub Actions artifacts.
-
-- GitHub release assets are published for version tags such as `v0.2.4`
-- the main device sideload artifact is `tunguska-vX.Y.Z-arm64-v8a-internal.apk`
-- the emulator test artifact is `tunguska-vX.Y.Z-x86_64-emulator-internal.apk`
-- a matching `.sha256` file is published for each APK
-
-Release page:
-
-- `https://github.com/Acionyx/tunguska/releases`
-
-The release process is documented in [docs/release-process.md](./docs/release-process.md).
+See [docs/anubis-integration.md](./docs/anubis-integration.md).
 
 ## Build From Source
 
-The pinned `libbox-android` dependency is consumed from GitHub Packages by default.
-
-Set GitHub Packages credentials first:
+Configure GitHub Packages access for `libbox-android`, unless `.tmp/maven` already contains a local override:
 
 ```properties
 # ~/.gradle/gradle.properties
@@ -285,52 +173,48 @@ githubPackagesUser=YOUR_GITHUB_USERNAME
 githubPackagesToken=YOUR_CLASSIC_PAT_WITH_READ_PACKAGES
 ```
 
-Environment variables work too:
+Environment variables also work:
 
 ```powershell
 $env:GITHUB_PACKAGES_USER = "YOUR_GITHUB_USERNAME"
 $env:GITHUB_PACKAGES_TOKEN = "YOUR_CLASSIC_PAT_WITH_READ_PACKAGES"
 ```
 
-The local `.tmp/maven` override takes precedence when present. That keeps maintainer refreshes reproducible, but it also means your machine will prefer the locally published `libbox-android` over GitHub Packages until you remove or refresh that cache.
-
-Typical local build:
+Typical local validation:
 
 ```powershell
-.\gradlew.bat :vpnservice:testDebugUnitTest :app:testDebugUnitTest :app:assembleInternal --no-configuration-cache
+.\gradlew.bat :vpnservice:testDebugUnitTest :app:testDebugUnitTest :app:compileDebugKotlin :app:compileDebugAndroidTestKotlin --console=plain
 ```
 
-Maintainers refreshing the pinned sing-box runtime can still build from upstream source and publish a local override under `.tmp/maven`:
+Build local installable artifacts:
 
 ```powershell
-.\tools\runtime\fetch-singbox-embedded.ps1 -PublishTarget LocalMaven
+.\tools\release\build-internal.ps1
 ```
 
-If you already keep an upstream `sing-box` checkout elsewhere, point the refresh at it instead of cloning under `.tmp`:
+## Test Strategy
 
-```powershell
-.\tools\runtime\fetch-singbox-embedded.ps1 -PublishTarget LocalMaven -SingBoxRepoPath C:\src\SagerNet-sing-box
-```
+Inner-loop checks:
 
-To refresh the dependency and push the same pinned coordinates to GitHub Packages, publish both targets in one pass:
+- unit tests for domain, compiler, runtime, and export behavior
+- Compose/instrumentation tests for UI routing, export, security, and runtime controls
+- focused headed emulator proofs for Chrome/IP and selected UI flows
 
-```powershell
-.\tools\runtime\fetch-singbox-embedded.ps1 -PublishTarget Both
-```
+Pre-commit or pre-release gates:
 
-For GitHub Packages publication, the token must be a classic PAT with `read:packages` and `write:packages`.
+- both runtime lanes for Chrome/IP smoke
+- joint Tunguska + Anubis E2E for `XRAY_TUN2SOCKS` and `SINGBOX_EMBEDDED`
+- physical-device validation when changing runtime, routing, or security claims
 
-Local sideload package helper:
-
-- [tools/release/build-internal.ps1](./tools/release/build-internal.ps1)
+Do not run the full Anubis proof as a routine inner-loop check. It is intentionally heavier than focused proofs.
 
 ## Repository Guide
 
-- [SPEC.md](./SPEC.md): current product specification
-- [THREAT_MODEL.md](./THREAT_MODEL.md): threat model and residual risks
-- [PRIVACY.md](./PRIVACY.md): privacy and local data handling
-- [SECURITY.md](./SECURITY.md): vulnerability reporting policy
-- [docs/e2e-testing.md](./docs/e2e-testing.md): local emulator, diagnostics, and joint Tunguska + Anubis validation guide
-- [docs/mvp-device-validation.md](./docs/mvp-device-validation.md): detector and real-device validation matrix
-- [docs/anubis-integration.md](./docs/anubis-integration.md): token-gated automation setup for Anubis-style orchestration
-- [docs/release-process.md](./docs/release-process.md): versioning and GitHub Release process
+- [SPEC.md](./SPEC.md): current implementation specification.
+- [THREAT_MODEL.md](./THREAT_MODEL.md): threat model and residual risks.
+- [PRIVACY.md](./PRIVACY.md): privacy and local data handling.
+- [SECURITY.md](./SECURITY.md): vulnerability reporting policy.
+- [docs/e2e-testing.md](./docs/e2e-testing.md): emulator and Anubis validation guide.
+- [docs/device-validation.md](./docs/device-validation.md): physical-device validation matrix.
+- [docs/anubis-integration.md](./docs/anubis-integration.md): automation contract.
+- [docs/release-process.md](./docs/release-process.md): versioning and GitHub Release process.

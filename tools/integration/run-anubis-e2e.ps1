@@ -4,6 +4,8 @@ param(
     [string]$AvdName = "tunguska-api34",
     [string]$AnubisRepo = "",
     [string[]]$RuntimeStrategies = @("XRAY_TUN2SOCKS", "SINGBOX_EMBEDDED"),
+    [ValidateSet("Fast", "Full")]
+    [string]$DiagnosticsMode = "Fast",
     [switch]$Headless,
     [switch]$NoHardReset,
     [switch]$SkipInstall,
@@ -252,6 +254,7 @@ try {
             "shell", "am", "instrument", "-w", "-r",
             "-e", "class", "io.acionyx.tunguska.app.PrepareAutomationFixtureTest",
             "-e", "runtime_strategy", $runtimeStrategy,
+            "-e", "diagnostics_mode", $DiagnosticsMode,
             "io.acionyx.tunguska.test/androidx.test.runner.AndroidJUnitRunner"
         )
         Assert-EmulatorOnline
@@ -274,6 +277,7 @@ try {
             "shell", "am", "instrument", "-w", "-r",
             "-e", "class", "io.acionyx.tunguska.trafficprobe.AnubisJointUiProofTest",
             "-e", "runtime_strategy", $runtimeStrategy,
+            "-e", "diagnostics_mode", $DiagnosticsMode,
             "io.acionyx.tunguska.jointtesthost.test/androidx.test.runner.AndroidJUnitRunner"
         )
 

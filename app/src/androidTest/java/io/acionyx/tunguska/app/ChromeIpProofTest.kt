@@ -25,6 +25,7 @@ class ChromeIpProofTest {
 
         val tunneledIp = harness.openChromeAndReadIp("vpn")
         assertNotEquals("Chrome kept the same public IP after VPN startup.", directIp, tunneledIp)
+        harness.waitForHomeExitIp(tunneledIp)
 
         harness.launchTunguska()
         harness.stopAndWaitForIdle()

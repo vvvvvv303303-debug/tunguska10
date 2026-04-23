@@ -69,9 +69,10 @@ object ProfileImportParser {
                 listOf(issue("import.uri", "Import payload exceeds the $MAX_IMPORT_URI_CHARS character limit.")),
             )
         }
+        val normalizedInput = normalizeShareUri(input)
 
         val uri = try {
-            URI(input)
+            URI(normalizedInput)
         } catch (error: Exception) {
             throw ProfileImportException(listOf(issue("import.uri", "Import payload is not a valid URI.")))
         }
@@ -144,6 +145,9 @@ object ProfileImportParser {
         }
 
         val warnings = mutableListOf<String>()
+        if (normalizedInput != input) {
+            warnings += "Normalized raw spaces in the imported share link."
+        }
         val ignoredKeys = query.keys - SUPPORTED_QUERY_KEYS
         if (ignoredKeys.isNotEmpty()) {
             warnings += "Ignored unsupported query parameters: ${ignoredKeys.sorted().joinToString()}."
@@ -192,6 +196,8 @@ object ProfileImportParser {
             warnings = warnings.toList(),
         )
     }
+
+    private fun normalizeShareUri(value: String): String = value.replace(" ", "%20")
 
     private fun parseJsonProfile(rawInput: String): ImportedProfile {
         val input = rawInput.trim()

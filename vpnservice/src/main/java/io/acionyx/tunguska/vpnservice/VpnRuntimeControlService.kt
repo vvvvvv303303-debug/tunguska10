@@ -8,11 +8,13 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.Message
 import android.os.Messenger
+import java.util.concurrent.Executors
 
 class VpnRuntimeControlService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private val incomingMessenger = Messenger(IncomingHandler())
     private val runtimeAuditor = RuntimeListenerAuditor()
+    private val egressProbeExecutor = Executors.newSingleThreadExecutor()
     private val periodicAuditRunnable = object : Runnable {
         override fun run() {
             runRuntimeAudit()
@@ -32,6 +34,7 @@ class VpnRuntimeControlService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacks(periodicAuditRunnable)
+        egressProbeExecutor.shutdownNow()
         super.onDestroy()
     }
 
@@ -40,6 +43,16 @@ class VpnRuntimeControlService : Service() {
             when (msg.what) {
                 VpnRuntimeContract.MSG_GET_STATUS -> {
                     reply(msg.replyTo, VpnRuntimeContract.statusMessage(runRuntimeAudit()))
+                }
+
+                VpnRuntimeContract.MSG_PROBE_EGRESS_IP -> {
+                    val replyTo = msg.replyTo
+                    egressProbeExecutor.execute {
+                        val observation = runEngineEgressProbe()
+                        handler.post {
+                            reply(replyTo, VpnRuntimeContract.egressIpMessage(observation))
+                        }
+                    }
                 }
 
                 VpnRuntimeContract.MSG_STAGE_PLAN -> {
@@ -144,6 +157,14 @@ class VpnRuntimeControlService : Service() {
     private fun runRuntimeAudit(): VpnRuntimeSnapshot {
         val result = runtimeAuditor.auditUid(applicationInfo.uid)
         return VpnRuntimeStore.recordAudit(result)
+    }
+
+    private fun runEngineEgressProbe(): RuntimeEgressIpObservation {
+        val snapshot = VpnRuntimeStore.snapshot()
+        if (snapshot.phase != VpnRuntimePhase.RUNNING) {
+            return RuntimeEgressIpProbe.unavailable("VPN runtime is not running.")
+        }
+        return ActiveRuntimeSessionStore.observeEgressIp()
     }
 
     private companion object {

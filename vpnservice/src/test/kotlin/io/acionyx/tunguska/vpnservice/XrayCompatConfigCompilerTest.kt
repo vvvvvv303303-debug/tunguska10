@@ -2,6 +2,7 @@ package io.acionyx.tunguska.vpnservice
 
 import io.acionyx.tunguska.domain.DnsMode
 import io.acionyx.tunguska.domain.ProfileIr
+import io.acionyx.tunguska.domain.RegionalBypassSettings
 import io.acionyx.tunguska.domain.defaultRegionalBypass
 import io.acionyx.tunguska.domain.RouteAction
 import io.acionyx.tunguska.domain.RouteMatch
@@ -116,6 +117,30 @@ class XrayCompatConfigCompilerTest {
     }
 
     @Test
+    fun `compiler emits vless flow when profile declares vision`() {
+        val compiled = XrayCompatConfigCompiler.compile(
+            profile = sampleProfile().copy(
+                outbound = sampleProfile().outbound.copy(
+                    flow = "xtls-rprx-vision",
+                ),
+            ),
+            bridge = AuthenticatedLocalBridge(
+                port = 25001,
+                user = "bridge-user",
+                password = "bridge-pass",
+            ),
+        )
+
+        val root = Json.parseToJsonElement(compiled.json).jsonObject
+        val user = root.getValue("outbounds").jsonArray.first().jsonObject
+            .getValue("settings").jsonObject
+            .getValue("vnext").jsonArray.first().jsonObject
+            .getValue("users").jsonArray.first().jsonObject
+
+        assertEquals("xtls-rprx-vision", user.getValue("flow").jsonPrimitive.content)
+    }
+
+    @Test
     fun `system dns uses built-in tcp resolvers and dns outbound interception`() {
         val compiled = XrayCompatConfigCompiler.compile(
             profile = sampleProfile().copy(dns = DnsMode.SystemDns),
@@ -183,6 +208,35 @@ class XrayCompatConfigCompilerTest {
         assertTrue(
             rules[regionalRuleIndex].jsonObject.getValue("ip").jsonArray.any {
                 it.jsonPrimitive.content == "geoip:ru"
+            },
+        )
+    }
+
+    @Test
+    fun `compiler emits generated custom direct domains`() {
+        val compiled = XrayCompatConfigCompiler.compile(
+            profile = sampleProfile().copy(
+                routing = sampleProfile().routing.copy(
+                    regionalBypass = RegionalBypassSettings(
+                        customDirectDomains = listOf("example.com"),
+                    ),
+                ),
+            ),
+            bridge = AuthenticatedLocalBridge(
+                port = 25001,
+                user = "bridge-user",
+                password = "bridge-pass",
+            ),
+        )
+
+        val root = Json.parseToJsonElement(compiled.json).jsonObject
+        val rules = root.getValue("routing").jsonObject.getValue("rules").jsonArray
+
+        assertTrue(
+            rules.any { rule ->
+                val json = rule.jsonObject
+                json["outboundTag"]?.jsonPrimitive?.content == "direct" &&
+                    json["domain"]?.jsonArray?.any { it.jsonPrimitive.content == "domain:example.com" } == true
             },
         )
     }

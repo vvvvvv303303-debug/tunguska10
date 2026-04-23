@@ -2,6 +2,7 @@ package io.acionyx.tunguska.app
 
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.VpnService
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.test.hasTestTag
@@ -56,16 +57,30 @@ internal class VpnTestHarness(
         appContext.filesDir,
         DIAGNOSTICS_DIRECTORY_NAME,
     ).apply { mkdirs() }
+    private val diagnosticsMode = DiagnosticsMode.from(
+        InstrumentationRegistry.getArguments().getString(DIAGNOSTICS_MODE_ARGUMENT),
+    )
 
     fun importShareLinkFromArgsOrDefault() {
         importPayload(shareLinkFromArgs())
     }
 
     fun importPayload(payload: String) {
+        launchTunguska()
+        openSection(UiTags.TAB_PROFILES)
+        if (composeRule.onAllNodesWithTag(UiTags.IMPORT_DRAFT_FIELD, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()) {
+            scrollToTag(UiTags.OPEN_PROFILE_IMPORT_BUTTON)
+            composeRule.onNodeWithTag(UiTags.OPEN_PROFILE_IMPORT_BUTTON, useUnmergedTree = true)
+                .performScrollTo()
+                .performClick()
+            composeRule.waitUntil(timeoutMillis = 10_000) {
+                composeRule.onAllNodesWithTag(UiTags.IMPORT_DRAFT_FIELD, useUnmergedTree = true)
+                    .fetchSemanticsNodes().isNotEmpty()
+            }
+        }
         composeRule.waitForIdle()
         composeRule.onNodeWithTag(UiTags.IMPORT_DRAFT_FIELD, useUnmergedTree = true)
             .performTextReplacement(payload)
-        device.pressBack()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag(UiTags.MAIN_SCROLL_COLUMN, useUnmergedTree = true)
             .performScrollToNode(hasTestTag(UiTags.VALIDATE_IMPORT_BUTTON))
@@ -84,43 +99,75 @@ internal class VpnTestHarness(
         composeRule.onNodeWithTag(UiTags.CONFIRM_IMPORT_BUTTON, useUnmergedTree = true)
             .performScrollTo()
             .performClick()
+        composeRule.waitForIdle()
+        if (composeRule.onAllNodesWithTag(UiTags.BACK_BUTTON, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()) {
+            composeRule.onNodeWithTag(UiTags.BACK_BUTTON, useUnmergedTree = true)
+                .performClick()
+            composeRule.waitForIdle()
+        }
         waitForAppliedProfile(payload)
         captureStep("post_confirm_import")
     }
 
     fun connectAndWait(expectedPhase: String = expectedPhaseFromArgs()) {
+        launchTunguska()
+        openSection(UiTags.TAB_HOME)
         composeRule.onNodeWithTag(UiTags.MAIN_SCROLL_COLUMN, useUnmergedTree = true)
             .performScrollToNode(hasTestTag(UiTags.CONNECT_BUTTON))
         captureStep("pre_connect")
         tapConnectButton()
-        confirmVpnPermissionIfPresent()
+        val permissionPromptAccepted = confirmVpnPermissionIfPresent()
         captureStep("post_permission_dialog")
-        waitForComposeText("Permission: granted", timeoutMillis = 20_000)
-        if (hasComposeText("Phase: IDLE")) {
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            VpnService.prepare(appContext) == null
+        }
+        if (
+            permissionPromptAccepted &&
+            composeRule.onAllNodesWithTag(UiTags.CONNECT_BUTTON, useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        ) {
             tapConnectButton()
         }
-        waitForRuntimePhase(expectedPhase)
+        waitForRuntimePhase(expectedPhase, requireVisibleHomeUi = false)
         captureStep("post_connect")
     }
 
     fun waitForRuntimePhaseVisible(expectedPhase: String) {
         launchTunguska()
-        waitForRuntimePhase(expectedPhase)
+        openSection(UiTags.TAB_HOME)
+        waitForRuntimePhase(expectedPhase, requireVisibleHomeUi = true)
     }
 
     fun stopAndWaitForIdle() {
+        launchTunguska()
+        openSection(UiTags.TAB_HOME)
         if (!composeRule.onAllNodesWithTag(UiTags.STOP_BUTTON, useUnmergedTree = true).fetchSemanticsNodes().any()) {
             return
         }
         composeRule.onNodeWithTag(UiTags.STOP_BUTTON, useUnmergedTree = true)
             .performScrollTo()
             .performClick()
-        waitForRuntimePhase(VpnRuntimePhase.IDLE.name)
+        waitForRuntimePhase(
+            expectedPhase = VpnRuntimePhase.IDLE.name,
+            requireVisibleHomeUi = false,
+        )
         captureStep("post_stop")
     }
 
     fun enableAutomationIntegrationViaUi(): String {
         launchTunguska()
+        openSection(UiTags.TAB_SECURITY)
+        if (composeRule.onAllNodesWithTag(UiTags.AUTOMATION_ENABLE_SWITCH, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()) {
+            scrollToTag(UiTags.OPEN_AUTOMATION_BUTTON)
+            composeRule.onNodeWithTag(UiTags.OPEN_AUTOMATION_BUTTON, useUnmergedTree = true)
+                .performScrollTo()
+                .performClick()
+            composeRule.waitUntil(timeoutMillis = 10_000) {
+                composeRule.onAllNodesWithTag(UiTags.AUTOMATION_ENABLE_SWITCH, useUnmergedTree = true)
+                    .fetchSemanticsNodes().isNotEmpty()
+            }
+        }
         if (!automationRepository.load().enabled) {
             composeRule.onNodeWithTag(UiTags.MAIN_SCROLL_COLUMN, useUnmergedTree = true)
                 .performScrollToNode(hasTestTag(UiTags.AUTOMATION_ENABLE_SWITCH))
@@ -138,6 +185,7 @@ internal class VpnTestHarness(
 
     fun selectRuntimeStrategy(strategy: EmbeddedRuntimeStrategyId) {
         launchTunguska()
+        openSection(UiTags.TAB_SECURITY)
         val strategyTag = when (strategy) {
             EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS -> UiTags.RUNTIME_STRATEGY_XRAY_BUTTON
             EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED -> UiTags.RUNTIME_STRATEGY_SINGBOX_BUTTON
@@ -169,6 +217,13 @@ internal class VpnTestHarness(
         )
     }
 
+    fun waitForHomeExitIp(expectedIp: String) {
+        launchTunguska()
+        openSection(UiTags.TAB_HOME)
+        waitForComposeText("Exit IP $expectedIp", timeoutMillis = 45_000)
+        captureStep("home_exit_ip_observed")
+    }
+
     fun writeAutomationTokenFixture(token: String) {
         device.executeShellCommand("settings put global $AUTOMATION_TOKEN_SETTING $token")
         val storedToken = device.executeShellCommand("settings get global $AUTOMATION_TOKEN_SETTING").trim()
@@ -180,13 +235,15 @@ internal class VpnTestHarness(
     }
 
     fun openRegionalBypassConfig() {
+        launchTunguska()
+        openSection(UiTags.TAB_ROUTING)
         scrollToTag(UiTags.CONFIGURE_REGIONAL_BYPASS_BUTTON)
-        if (composeRule.onAllNodesWithTag(UiTags.ROUTE_PREVIEW_HOST_FIELD, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()) {
+        if (composeRule.onAllNodesWithTag(UiTags.RUSSIA_DIRECT_SWITCH, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()) {
             composeRule.onNodeWithTag(UiTags.CONFIGURE_REGIONAL_BYPASS_BUTTON, useUnmergedTree = true)
                 .performScrollTo()
                 .performClick()
             composeRule.waitUntil(timeoutMillis = 5_000) {
-                composeRule.onAllNodesWithTag(UiTags.ROUTE_PREVIEW_HOST_FIELD, useUnmergedTree = true)
+                composeRule.onAllNodesWithTag(UiTags.RUSSIA_DIRECT_SWITCH, useUnmergedTree = true)
                     .fetchSemanticsNodes().isNotEmpty()
             }
         }
@@ -222,19 +279,57 @@ internal class VpnTestHarness(
         destinationIp: String = "",
         destinationPort: String = "443",
         packageName: String = "",
+        protocol: NetworkProtocol = NetworkProtocol.TCP,
     ) {
-        openRegionalBypassConfig()
+        openRoutePreview()
         replaceTextField(UiTags.ROUTE_PREVIEW_PACKAGE_FIELD, packageName)
         replaceTextField(UiTags.ROUTE_PREVIEW_HOST_FIELD, destinationHost)
         replaceTextField(UiTags.ROUTE_PREVIEW_IP_FIELD, destinationIp)
         replaceTextField(UiTags.ROUTE_PREVIEW_PORT_FIELD, destinationPort)
-        device.pressBack()
-        composeRule.waitForIdle()
+        val protocolTag = when (protocol) {
+            NetworkProtocol.TCP -> UiTags.ROUTE_PREVIEW_PROTOCOL_TCP_BUTTON
+            NetworkProtocol.UDP -> UiTags.ROUTE_PREVIEW_PROTOCOL_UDP_BUTTON
+        }
+        composeRule.onNodeWithTag(protocolTag, useUnmergedTree = true)
+            .performScrollTo()
+            .performClick()
+        composeRule.onNodeWithTag(UiTags.ROUTE_PREVIEW_TEST_BUTTON, useUnmergedTree = true)
+            .performScrollTo()
+            .performClick()
+        closeDetailScreen()
         captureStep("regional_bypass_preview_updated")
     }
 
+    fun assertDirectDomainVisible(label: String, source: String) {
+        openRegionalBypassConfig()
+        scrollToTag(UiTags.DIRECT_DOMAIN_LIST)
+        waitForComposeText(label, timeoutMillis = 5_000)
+        waitForComposeText(source, timeoutMillis = 5_000)
+    }
+
+    fun assertDirectDomainAbsent(label: String) {
+        openRegionalBypassConfig()
+        scrollToTag(UiTags.DIRECT_DOMAIN_LIST)
+        val nodes = composeRule.onAllNodesWithText(label, substring = false, useUnmergedTree = true)
+            .fetchSemanticsNodes()
+        assertTrue("Expected '$label' to be absent from the direct-domain list.", nodes.isEmpty())
+    }
+
     fun assertRoutePreviewDecision(action: String, routeId: String) {
-        waitForComposeText("Decision: $action via $routeId", timeoutMillis = 5_000)
+        val outcome = when (action.uppercase()) {
+            "PROXY" -> "Would use VPN"
+            "DIRECT" -> "Would go direct"
+            "BLOCK" -> "Would be blocked"
+            else -> error("Unsupported route action in test: $action")
+        }
+        val routeLabel = when (routeId) {
+            "default" -> "Default VPN route"
+            "__regional_bypass_russia__" -> "Russia direct preset"
+            "__regional_bypass_custom_direct__" -> "Custom direct domain"
+            else -> "Rule $routeId"
+        }
+        waitForComposeText(outcome, timeoutMillis = 5_000)
+        waitForComposeText(routeLabel, timeoutMillis = 5_000)
     }
 
     fun assertRoutePreviewReasonContains(text: String) {
@@ -243,6 +338,42 @@ internal class VpnTestHarness(
 
     fun assertRoutePreviewHintContains(text: String) {
         waitForComposeText(text, timeoutMillis = 5_000)
+    }
+
+    fun exportBackupThroughUiAndDismissShareSheet() {
+        openSection(UiTags.TAB_SECURITY)
+        scrollToTag(UiTags.EXPORT_BACKUP_BUTTON)
+        composeRule.onNodeWithTag(UiTags.EXPORT_BACKUP_BUTTON, useUnmergedTree = true)
+            .performScrollTo()
+            .performClick()
+        composeRule.waitForIdle()
+        waitForSystemShareSheet()
+        device.pressBack()
+        launchTunguska()
+        openSection(UiTags.TAB_SECURITY)
+        waitForComposeText("Backup saved", timeoutMillis = 5_000)
+        captureStep("backup_export_ui")
+    }
+
+    fun exportAuditThroughUiAndDismissShareSheet() {
+        openSection(UiTags.TAB_SECURITY)
+        scrollToTag(UiTags.EXPORT_AUDIT_BUTTON)
+        composeRule.onNodeWithTag(UiTags.EXPORT_AUDIT_BUTTON, useUnmergedTree = true)
+            .performScrollTo()
+            .performClick()
+        composeRule.waitForIdle()
+        waitForSystemShareSheet()
+        device.pressBack()
+        launchTunguska()
+        openSection(UiTags.TAB_SECURITY)
+        waitForComposeText("Audit saved", timeoutMillis = 5_000)
+        captureStep("audit_export_ui")
+    }
+
+    fun assertBackupAndAuditStatesIndependent() {
+        openSection(UiTags.TAB_SECURITY)
+        waitForComposeText("Backup saved", timeoutMillis = 5_000)
+        waitForComposeText("Audit saved", timeoutMillis = 5_000)
     }
 
     fun invokeAutomationStart(token: String, callerHint: String = "androidTest"): String {
@@ -334,6 +465,16 @@ internal class VpnTestHarness(
     }
 
     fun launchTunguska() {
+        val alreadyAttached = runCatching {
+            composeRule.onAllNodesWithTag(UiTags.MAIN_SCROLL_COLUMN, useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }.getOrDefault(false)
+        val foregroundVisible = device.hasObject(By.pkg(TUNGUSKA_PACKAGE))
+        if (alreadyAttached && foregroundVisible) {
+            composeRule.waitForIdle()
+            return
+        }
         launchPackage(
             packageName = TUNGUSKA_PACKAGE,
             errorMessage = "Tunguska did not reach the foreground.",
@@ -432,12 +573,17 @@ internal class VpnTestHarness(
         .getString("expected_phase")
         ?: VpnRuntimePhase.RUNNING.name
 
-    private fun confirmVpnPermissionIfPresent(timeoutMillis: Long = 10_000) {
+    private fun confirmVpnPermissionIfPresent(timeoutMillis: Long = 10_000): Boolean {
         val button = device.wait(Until.findObject(By.res("android:id/button1")), timeoutMillis)
             ?: device.wait(Until.findObject(By.textContains("Allow")), 2_000)
             ?: device.wait(Until.findObject(By.textContains("OK")), 2_000)
             ?: device.wait(Until.findObject(By.textContains("Continue")), 2_000)
-        button?.click()
+        return if (button != null) {
+            button.click()
+            true
+        } else {
+            false
+        }
     }
 
     private fun dismissChromeFirstRunPrompts() {
@@ -475,6 +621,77 @@ internal class VpnTestHarness(
             .performScrollToNode(hasTestTag(tag))
     }
 
+    private fun closeDetailScreen() {
+        if (hasNodeWithTag(UiTags.BACK_BUTTON)) {
+            clickNodeWithTag(UiTags.BACK_BUTTON)
+        }
+        composeRule.waitForIdle()
+    }
+
+    private fun waitForSystemShareSheet() {
+        val resolverVisible = device.wait(Until.hasObject(By.pkg(INTENT_RESOLVER_PACKAGE)), 5_000)
+        val currentFocus = device.executeShellCommand("dumpsys window")
+            .lineSequence()
+            .filter { it.contains("mCurrentFocus") }
+            .lastOrNull()
+            .orEmpty()
+        val chooserFocused = currentFocus.contains("ResolverActivity") ||
+            currentFocus.contains("ChooserActivity") ||
+            currentFocus.contains(INTENT_RESOLVER_PACKAGE) ||
+            currentFocus.contains("com.google.android.intentresolver")
+        if (!resolverVisible && !chooserFocused) {
+            captureDiagnostics("share_sheet_timeout")
+            fail("Expected Android share sheet after export, but it did not open.")
+        }
+    }
+
+    private fun openRoutePreview() {
+        launchTunguska()
+        openSection(UiTags.TAB_ROUTING)
+        scrollToTag(UiTags.OPEN_ROUTE_PREVIEW_BUTTON)
+        if (composeRule.onAllNodesWithTag(UiTags.ROUTE_PREVIEW_HOST_FIELD, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()) {
+            composeRule.onNodeWithTag(UiTags.OPEN_ROUTE_PREVIEW_BUTTON, useUnmergedTree = true)
+                .performScrollTo()
+                .performClick()
+            composeRule.waitUntil(timeoutMillis = 5_000) {
+                composeRule.onAllNodesWithTag(UiTags.ROUTE_PREVIEW_HOST_FIELD, useUnmergedTree = true)
+                    .fetchSemanticsNodes().isNotEmpty()
+            }
+        }
+        captureStep("route_preview_open")
+    }
+
+    private fun openSection(tag: String) {
+        if (!hasNodeWithTag(tag) && hasNodeWithTag(UiTags.BACK_BUTTON)) {
+            clickNodeWithTag(UiTags.BACK_BUTTON)
+            composeRule.waitForIdle()
+        }
+        if (!hasNodeWithTag(tag)) {
+            runCatching {
+                scrollToTag(UiTags.BACK_BUTTON)
+                clickNodeWithTag(UiTags.BACK_BUTTON)
+                composeRule.waitForIdle()
+            }
+        }
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            hasNodeWithTag(tag)
+        }
+        clickNodeWithTag(tag)
+        composeRule.waitForIdle()
+    }
+
+    private fun hasNodeWithTag(tag: String): Boolean =
+        composeRule.onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() ||
+            composeRule.onAllNodesWithTag(tag, useUnmergedTree = false).fetchSemanticsNodes().isNotEmpty()
+
+    private fun clickNodeWithTag(tag: String) {
+        val useUnmergedTree = composeRule.onAllNodesWithTag(tag, useUnmergedTree = true)
+            .fetchSemanticsNodes()
+            .isNotEmpty()
+        composeRule.onNodeWithTag(tag, useUnmergedTree = useUnmergedTree)
+            .performClick()
+    }
+
     private fun replaceTextField(tag: String, value: String) {
         scrollToTag(tag)
         composeRule.onNodeWithTag(tag, useUnmergedTree = true)
@@ -494,17 +711,45 @@ internal class VpnTestHarness(
             .performClick()
     }
 
-    private fun waitForRuntimePhase(expectedPhase: String) {
-        val phaseText = "Phase: $expectedPhase"
+    private fun waitForRuntimePhase(
+        expectedPhase: String,
+        requireVisibleHomeUi: Boolean,
+    ) {
+        val expected = VpnRuntimePhase.valueOf(expectedPhase)
         val found = runCatching {
             composeRule.waitUntil(timeoutMillis = 60_000) {
-                hasComposeText(phaseText)
+                val snapshotMatches = runCatching { requestRuntimeSnapshot().phase == expected }
+                    .getOrDefault(false)
+                val transportMatches = when (expected) {
+                    VpnRuntimePhase.RUNNING -> isVpnTransportActive()
+                    VpnRuntimePhase.IDLE -> !isVpnTransportActive()
+                    else -> true
+                }
+                val uiMatches = when (expected) {
+                    VpnRuntimePhase.IDLE ->
+                        hasComposeText("Ready to connect") ||
+                            composeRule.onAllNodesWithTag(UiTags.CONNECT_BUTTON, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+
+                    VpnRuntimePhase.STAGED -> hasComposeText("Profile staged")
+                    VpnRuntimePhase.START_REQUESTED -> hasComposeText("Connecting")
+                    VpnRuntimePhase.RUNNING ->
+                        hasComposeText("Protected") ||
+                            composeRule.onAllNodesWithTag(UiTags.STOP_BUTTON, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+
+                    VpnRuntimePhase.FAIL_CLOSED ->
+                        hasComposeText("Attention required") || hasComposeText("Needs attention")
+                }
+                when {
+                    !snapshotMatches -> false
+                    requireVisibleHomeUi -> uiMatches
+                    else -> transportMatches
+                }
             }
             true
         }.getOrDefault(false)
         if (!found) {
             captureDiagnostics("runtime_phase_timeout")
-            fail("Expected runtime phase '$phaseText' was not observed within timeout.")
+            fail("Expected runtime phase '$expectedPhase' was not observed within timeout.")
         }
     }
 
@@ -606,9 +851,15 @@ internal class VpnTestHarness(
         device.executeShellCommand(
             "am start -W -n $CHROME_COMPONENT -a android.intent.action.VIEW -d $url",
         )
-        val visible = device.wait(Until.hasObject(By.pkg(CHROME_PACKAGE)), 15_000)
+        val visible = device.wait(Until.hasObject(By.pkg(CHROME_PACKAGE)), 20_000) ||
+            foregroundWindowContains(CHROME_PACKAGE)
         assertTrue("Chrome did not reach the foreground.", visible)
     }
+
+    private fun foregroundWindowContains(packageName: String): Boolean = runCatching {
+        device.executeShellCommand("dumpsys window")
+            .contains(packageName, ignoreCase = true)
+    }.getOrDefault(false)
 
     private fun waitForProbeResult(packageName: String, label: String): ProbeResult {
         val timeoutMillis = if (packageName == TRAFFIC_PROBE_PACKAGE) 12_000L else 15_000L
@@ -686,7 +937,10 @@ internal class VpnTestHarness(
     }
 
     private fun captureStep(label: String) {
-        captureVisualDiagnostics(label)
+        when (diagnosticsMode) {
+            DiagnosticsMode.FULL -> captureVisualDiagnostics(label)
+            DiagnosticsMode.FAST -> writeStepMarker(label)
+        }
     }
 
     private fun dumpWindowHierarchy(): String {
@@ -728,6 +982,16 @@ internal class VpnTestHarness(
         )
     }
 
+    private fun writeStepMarker(label: String) {
+        diagnosticsDirectory.resolve("$label-step.txt").writeText(
+            buildString {
+                appendLine("label=$label")
+                appendLine("timestamp_ms=${System.currentTimeMillis()}")
+                appendLine("package=${device.currentPackageName.orEmpty()}")
+            },
+        )
+    }
+
     private fun containsSensitiveFixture(text: String): Boolean =
         SHARE_LINK_REGEX.containsMatchIn(text) ||
             sensitiveFixtureTerms().any { text.contains(it) }
@@ -747,6 +1011,7 @@ internal class VpnTestHarness(
             addIfNotBlank(shareLink)
             addIfNotBlank(profile.id)
             addIfNotBlank(profile.name)
+            addIfNotBlank(profile.outbound.uuid)
             addIfNotBlank(profile.outbound.address)
             addIfNotBlank(profile.outbound.serverName)
             addIfNotBlank(profile.outbound.realityPublicKey)
@@ -790,6 +1055,7 @@ internal class VpnTestHarness(
                 snapshot = currentSnapshot
                 latch.countDown()
             },
+            onEgressIpObservation = { _ -> },
         )
         client.bind()
         try {
@@ -811,6 +1077,7 @@ internal class VpnTestHarness(
         private const val TUNGUSKA_PACKAGE = "io.acionyx.tunguska"
         private const val CHROME_PACKAGE = "com.android.chrome"
         private const val TRAFFIC_PROBE_PACKAGE = "io.acionyx.tunguska.trafficprobe"
+        private const val INTENT_RESOLVER_PACKAGE = "com.android.intentresolver"
         private const val TUNGUSKA_COMPONENT = "io.acionyx.tunguska/io.acionyx.tunguska.app.MainActivity"
         private const val AUTOMATION_COMPONENT =
             "io.acionyx.tunguska/io.acionyx.tunguska.app.AutomationRelayActivity"
@@ -818,6 +1085,7 @@ internal class VpnTestHarness(
         private const val TRAFFIC_PROBE_COMPONENT =
             "io.acionyx.tunguska.trafficprobe/io.acionyx.tunguska.trafficprobe.ProbeActivity"
         private const val DIAGNOSTICS_DIRECTORY_NAME = "tunguska-smoke"
+        private const val DIAGNOSTICS_MODE_ARGUMENT = "diagnostics_mode"
         private const val AUTOMATION_TOKEN_SETTING = "tunguska_automation_token"
         private const val PROFILE_SHARE_LINK_SETTING = "tunguska_profile_share_link"
         private const val PROFILE_SHARE_LINK_HEX_SETTING = "tunguska_profile_share_link_hex"
@@ -838,6 +1106,18 @@ internal class VpnTestHarness(
             "vless://11111111-1111-1111-1111-111111111111@edge.example.com:443" +
                 "?security=reality&sni=cdn.example.com&pbk=public+key&sid=abcd1234" +
                 "&fp=chrome&flow=xtls-rprx-vision#Alpha%20Import"
+    }
+}
+
+private enum class DiagnosticsMode {
+    FAST,
+    FULL;
+
+    companion object {
+        fun from(raw: String?): DiagnosticsMode = when (raw?.trim()?.uppercase()) {
+            "FULL" -> FULL
+            else -> FAST
+        }
     }
 }
 

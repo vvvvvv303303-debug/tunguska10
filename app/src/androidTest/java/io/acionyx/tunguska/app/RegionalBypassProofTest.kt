@@ -19,6 +19,9 @@ class RegionalBypassProofTest {
         harness.launchTunguska()
         harness.importPayload(harness.buildProfile(TestSplitMode.FULL_TUNNEL).canonicalJson())
         harness.openRegionalBypassConfig()
+        harness.assertDirectDomainVisible(".ru", "Russia preset")
+        harness.assertDirectDomainVisible(".su", "Russia preset")
+        harness.assertDirectDomainVisible(".xn--p1ai", "Russia preset")
 
         harness.updateRoutePreview(destinationHost = "yandex.ru")
         harness.assertRoutePreviewDecision(action = "DIRECT", routeId = "__regional_bypass_russia__")
@@ -37,11 +40,13 @@ class RegionalBypassProofTest {
         harness.importPayload(harness.buildProfile(TestSplitMode.FULL_TUNNEL).canonicalJson())
 
         harness.setRussiaDirectEnabled(false)
+        harness.assertDirectDomainAbsent(".ru")
         harness.updateRoutePreview(destinationHost = "yandex.ru")
         harness.assertRoutePreviewDecision(action = "PROXY", routeId = "default")
         harness.assertRoutePreviewReasonContains("No explicit rule matched; using routing default.")
 
         harness.addRegionalDirectDomain("example.com")
+        harness.assertDirectDomainVisible(".example.com", "Custom")
         harness.updateRoutePreview(destinationHost = "sub.example.com")
         harness.assertRoutePreviewDecision(action = "DIRECT", routeId = "__regional_bypass_custom_direct__")
         harness.assertRoutePreviewReasonContains("Matched a custom direct domain in Regional Bypass.")

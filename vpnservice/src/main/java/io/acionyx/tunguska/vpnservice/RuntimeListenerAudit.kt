@@ -12,6 +12,7 @@ enum class RuntimeAuditStatus {
     NOT_RUN,
     PASS,
     FAIL,
+    LIMITED,
     UNAVAILABLE,
 }
 
@@ -33,21 +34,22 @@ class RuntimeListenerAuditor(
     private val policy: ListenerAuditPolicy = ListenerAuditPolicy.Default,
     private val allowanceProvider: () -> Set<RuntimeAllowedLoopbackListener> = RuntimeListenerAllowanceStore::snapshot,
 ) {
+    private var procNetRestricted: Boolean = false
+
     fun auditUid(uid: Int): RuntimeListenerAuditResult {
+        if (procNetRestricted) {
+            return limitedAuditResult()
+        }
+
         val inventories = PROC_NET_SOURCES.mapNotNull { source ->
-            procNetReader.read(source.path)?.let { raw ->
-                source.parser(source.protocol, raw)
-            }
+            procNetReader.read(source.path)
+                ?.takeIf { it.isNotBlank() }
+                ?.let { raw -> source.parser(source.protocol, raw) }
         }
 
         if (inventories.isEmpty()) {
-            return RuntimeListenerAuditResult(
-                status = RuntimeAuditStatus.UNAVAILABLE,
-                findings = emptyList(),
-                summary = "Listener audit unavailable because /proc/net socket sources could not be read.",
-                auditedAtEpochMs = clock(),
-                socketCount = 0,
-            )
+            procNetRestricted = true
+            return limitedAuditResult()
         }
 
         val sockets = inventories.flatten()
@@ -108,7 +110,31 @@ class RuntimeListenerAuditor(
             }
 
         RuntimeAuditStatus.NOT_RUN -> "Listener audit has not been run."
+        RuntimeAuditStatus.LIMITED -> limitedSummary(allowanceProvider())
         RuntimeAuditStatus.UNAVAILABLE -> "Listener audit unavailable."
+    }
+
+    private fun limitedAuditResult(): RuntimeListenerAuditResult = RuntimeListenerAuditResult(
+        status = RuntimeAuditStatus.LIMITED,
+        findings = emptyList(),
+        summary = limitedSummary(allowanceProvider()),
+        auditedAtEpochMs = clock(),
+        socketCount = 0,
+    )
+
+    private fun limitedSummary(allowedListeners: Set<RuntimeAllowedLoopbackListener>): String = buildString {
+        append("Android restricts OS socket inventory for app-sandboxed VPN processes; using Tunguska's declared runtime topology only.")
+        if (allowedListeners.isEmpty()) {
+            append(" No declared local runtime listeners are active.")
+        } else {
+            append(" Declared allowed loopback listener(s): ")
+            append(
+                allowedListeners
+                    .sortedWith(compareBy<RuntimeAllowedLoopbackListener> { it.protocol }.thenBy { it.port })
+                    .joinToString { "${it.protocol}://${it.address}:${it.port}" },
+            )
+            append('.')
+        }
     }
 
     private data class ProcNetSource(

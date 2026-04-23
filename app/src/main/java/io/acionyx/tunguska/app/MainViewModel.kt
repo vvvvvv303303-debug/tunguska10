@@ -3,6 +3,7 @@ package io.acionyx.tunguska.app
 import android.app.Application
 import android.content.ClipData
 import android.content.ClipboardManager
+import androidx.core.content.FileProvider
 import android.net.VpnService
 import android.os.Handler
 import android.os.Looper
@@ -25,10 +26,13 @@ import io.acionyx.tunguska.netpolicy.RoutePreviewOutcome
 import io.acionyx.tunguska.netpolicy.RoutePreviewRequest
 import io.acionyx.tunguska.storage.StoredProfile
 import io.acionyx.tunguska.vpnservice.EmbeddedRuntimeStrategyId
+import io.acionyx.tunguska.vpnservice.RuntimeEgressIpObservation
+import io.acionyx.tunguska.vpnservice.RuntimeEgressIpObservationStatus
 import io.acionyx.tunguska.vpnservice.TunnelSessionPlan
 import io.acionyx.tunguska.vpnservice.TunnelSessionPlanner
 import io.acionyx.tunguska.vpnservice.VpnRuntimePhase
 import io.acionyx.tunguska.vpnservice.VpnRuntimeSnapshot
+import java.io.File
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.ExecutorService
@@ -44,9 +48,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val regionalBypassPromptStore = RegionalBypassPromptStore(application)
     private val exportRepository = SecureExportRepository(application)
     private val subscriptionRepository = SecureSubscriptionRepository(application)
+    private val egressIpObservationRepository = EgressIpObservationRepository()
     private val subscriptionUpdateScheduler = SubscriptionUpdateScheduler(application)
     private val subscriptionNotificationPublisher = SubscriptionNotificationPublisher(application)
     private val backgroundExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val observationExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val runtimeAutomationOrchestrator = RuntimeAutomationOrchestrator(
         context = application,
@@ -69,14 +75,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 runtimeSnapshot = snapshot,
                 controlError = error ?: snapshot.lastError,
             )
+            synchronizeEgressObservation(snapshot)
         },
+        onEgressIpObservation = ::handleRuntimeEgressIpObservation,
     )
+    private val runtimeStatusRefreshLoop = object : Runnable {
+        override fun run() {
+            refreshRuntimeStatus()
+            mainHandler.postDelayed(this, RUNTIME_STATUS_REFRESH_INTERVAL_MS)
+        }
+    }
+    private val egressProbeTimeoutRunnable = Runnable {
+        if (!egressProbeInFlight || activeEgressProbePhase != VpnRuntimePhase.RUNNING) {
+            return@Runnable
+        }
+        egressProbeInFlight = false
+        activeEgressProbePhase = null
+        uiState = uiState.copy(
+            egressObservation = EgressObservationState(
+                phase = EgressObservationPhase.ERROR,
+                error = "Engine-routed exit IP detection timed out.",
+            ),
+        )
+        drainPendingEgressRefresh()
+    }
+    @Volatile private var egressProbeInFlight: Boolean = false
+    private var nextShareRequestId: Long = 1L
     private var pendingSubscriptionProfiles: List<ProfileIr> = emptyList()
     private var pendingSubscriptionSelectedIndex: Int = 0
     private var pendingSubscriptionConfig: SubscriptionConfig? = null
     private var subscriptionEventLog: SubscriptionEventLog = SubscriptionEventLog()
     private var subscriptionNotificationLedger: SubscriptionNotificationLedger = SubscriptionNotificationLedger()
     private var pendingImportedProfile: ImportedProfile? = null
+    private var lastObservedRuntimePhase: VpnRuntimePhase = VpnRuntimePhase.IDLE
+    private var activeEgressProbePhase: VpnRuntimePhase? = null
+    @Volatile private var pendingForcedEgressRefresh: Boolean = false
 
     var uiState: MainUiState by mutableStateOf(initialState())
         private set
@@ -87,6 +120,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         loadEncryptedProfile()
         loadSubscriptionConfig()
         runtimeClient.bind()
+        startRuntimeStatusRefreshLoop()
+        maybeRefreshEgressObservation(force = true)
     }
 
     fun updatePreview(
@@ -94,16 +129,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         destinationHost: String = uiState.routePreview.destinationHost,
         destinationIp: String = uiState.routePreview.destinationIp,
         destinationPort: String = uiState.routePreview.destinationPort,
+        protocol: NetworkProtocol = uiState.routePreview.protocol,
     ) {
         val preview = PreviewInputs(
             packageName = packageName,
             destinationHost = destinationHost,
             destinationIp = destinationIp,
             destinationPort = destinationPort,
+            protocol = protocol,
         )
         uiState = uiState.copy(
             routePreview = preview,
+            routePreviewStale = uiState.routePreviewLastTested == null || preview != uiState.routePreviewLastTested,
+        )
+    }
+
+    fun testRoutePreview() {
+        val preview = uiState.routePreview
+        uiState = uiState.copy(
+            routePreviewLastTested = preview,
+            routePreviewLastTestedAtEpochMs = System.currentTimeMillis(),
             previewOutcome = evaluatePreview(preview, uiState.profile),
+            routePreviewStale = false,
         )
     }
 
@@ -1176,7 +1223,119 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshRuntimeStatus() {
         runtimeClient.requestStatus()
+        maybeRefreshEgressObservation()
     }
+
+    private fun startRuntimeStatusRefreshLoop() {
+        mainHandler.removeCallbacks(runtimeStatusRefreshLoop)
+        mainHandler.postDelayed(runtimeStatusRefreshLoop, RUNTIME_STATUS_REFRESH_INTERVAL_MS)
+    }
+
+    private fun synchronizeEgressObservation(snapshot: VpnRuntimeSnapshot) {
+        val phaseChanged = snapshot.phase != lastObservedRuntimePhase
+        lastObservedRuntimePhase = snapshot.phase
+        maybeRefreshEgressObservation(force = phaseChanged)
+    }
+
+    private fun maybeRefreshEgressObservation(force: Boolean = false) {
+        if (egressProbeInFlight) {
+            if (force) {
+                pendingForcedEgressRefresh = true
+            }
+            return
+        }
+        val now = System.currentTimeMillis()
+        val lastObservedAt = uiState.egressObservation.observedAtEpochMs
+        if (!force && lastObservedAt != null && now - lastObservedAt < EGRESS_IP_REFRESH_INTERVAL_MS) {
+            return
+        }
+        val probePhase = uiState.runtimeSnapshot.phase
+        egressProbeInFlight = true
+        activeEgressProbePhase = probePhase
+        pendingForcedEgressRefresh = false
+        uiState = uiState.copy(
+            egressObservation = EgressObservationState(
+                phase = EgressObservationPhase.PROBING,
+            ),
+        )
+        if (probePhase == VpnRuntimePhase.RUNNING) {
+            runtimeClient.requestEgressIpObservation()
+            mainHandler.removeCallbacks(egressProbeTimeoutRunnable)
+            mainHandler.postDelayed(egressProbeTimeoutRunnable, EGRESS_IP_PROBE_TIMEOUT_MS)
+            return
+        }
+        observationExecutor.execute {
+            val result = runCatching { egressIpObservationRepository.observe() }
+            mainHandler.post {
+                mainHandler.removeCallbacks(egressProbeTimeoutRunnable)
+                egressProbeInFlight = false
+                activeEgressProbePhase = null
+                if (uiState.runtimeSnapshot.phase != probePhase) {
+                    maybeRefreshEgressObservation(force = true)
+                    return@post
+                }
+                result.onSuccess { observation ->
+                    uiState = uiState.copy(
+                        egressObservation = EgressObservationState(
+                            phase = EgressObservationPhase.OBSERVED,
+                            publicIp = observation.publicIp,
+                            observedAtEpochMs = observation.observedAtEpochMs,
+                            observedAt = formatObservedAt(observation.observedAtEpochMs),
+                        ),
+                    )
+                }.onFailure { error ->
+                    uiState = uiState.copy(
+                        egressObservation = EgressObservationState(
+                            phase = EgressObservationPhase.ERROR,
+                            error = error.message ?: error.javaClass.simpleName,
+                        ),
+                    )
+                }
+                drainPendingEgressRefresh()
+            }
+        }
+    }
+
+    private fun handleRuntimeEgressIpObservation(observation: RuntimeEgressIpObservation) {
+        mainHandler.removeCallbacks(egressProbeTimeoutRunnable)
+        val probePhase = activeEgressProbePhase
+        egressProbeInFlight = false
+        activeEgressProbePhase = null
+        if (probePhase != VpnRuntimePhase.RUNNING || uiState.runtimeSnapshot.phase != VpnRuntimePhase.RUNNING) {
+            maybeRefreshEgressObservation(force = true)
+            return
+        }
+        uiState = when (observation.status) {
+            RuntimeEgressIpObservationStatus.OBSERVED -> uiState.copy(
+                egressObservation = EgressObservationState(
+                    phase = EgressObservationPhase.OBSERVED,
+                    publicIp = observation.publicIp,
+                    observedAtEpochMs = observation.observedAtEpochMs,
+                    observedAt = formatObservedAt(observation.observedAtEpochMs),
+                ),
+            )
+
+            RuntimeEgressIpObservationStatus.UNAVAILABLE,
+            RuntimeEgressIpObservationStatus.FAILED -> uiState.copy(
+                egressObservation = EgressObservationState(
+                    phase = EgressObservationPhase.ERROR,
+                    error = observation.summary ?: "Engine-routed exit IP detection failed.",
+                ),
+            )
+        }
+        drainPendingEgressRefresh()
+    }
+
+    private fun drainPendingEgressRefresh() {
+        if (pendingForcedEgressRefresh) {
+            pendingForcedEgressRefresh = false
+            maybeRefreshEgressObservation(force = true)
+        }
+    }
+
+    private fun formatObservedAt(epochMs: Long): String = DateTimeFormatter.ISO_INSTANT.format(
+        Instant.ofEpochMilli(epochMs),
+    )
 
     fun reloadProfile() {
         runCatching { profileRepository.reload() }
@@ -1221,22 +1380,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 compiledConfig = uiState.compiledConfig,
             )
         }.onSuccess { artifact ->
+            val exportedState = artifact.toExportArtifactState(
+                current = uiState.backupExportState,
+                exportRootPath = exportRepository.exportRootPath,
+                keyReference = exportRepository.keyReference,
+            )
+            val shareRequest = runCatching { artifact.toShareRequest("Share encrypted backup") }
             uiState = uiState.copy(
-                exportState = uiState.exportState.copy(
-                    exportRootPath = exportRepository.exportRootPath,
-                    keyReference = exportRepository.keyReference,
-                    lastArtifactType = artifact.artifactType,
-                    lastArtifactPath = artifact.path,
-                    lastArtifactHash = artifact.payloadHash,
-                    lastCreatedAt = DateTimeFormatter.ISO_INSTANT.format(Instant.ofEpochMilli(artifact.createdAtEpochMs)),
-                    lastRedacted = artifact.redacted,
-                    status = artifact.summary,
-                    error = null,
+                backupExportState = shareRequest.fold(
+                    onSuccess = { exportedState },
+                    onFailure = { error ->
+                        exportedState.copy(
+                            status = "Encrypted backup was saved, but the share sheet could not be prepared.",
+                            error = error.message ?: error.javaClass.simpleName,
+                        )
+                    },
                 ),
+                pendingShareRequest = shareRequest.getOrNull(),
+            )
+            Log.i(
+                TAG,
+                "Encrypted backup exported type=${artifact.artifactType} sharePrepared=${shareRequest.isSuccess}.",
             )
         }.onFailure { error ->
             uiState = uiState.copy(
-                exportState = uiState.exportState.copy(
+                backupExportState = uiState.backupExportState.copy(
                     exportRootPath = exportRepository.exportRootPath,
                     keyReference = exportRepository.keyReference,
                     status = "Encrypted backup export failed.",
@@ -1255,26 +1423,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 runtimeSnapshot = uiState.runtimeSnapshot,
                 profileStorage = uiState.profileStorage,
                 automationState = uiState.automationState,
-                routePreview = uiState.routePreview,
+                routePreview = uiState.routePreviewLastTested ?: uiState.routePreview,
                 previewOutcome = uiState.previewOutcome,
             )
         }.onSuccess { artifact ->
+            val exportedState = artifact.toExportArtifactState(
+                current = uiState.auditExportState,
+                exportRootPath = exportRepository.exportRootPath,
+                keyReference = exportRepository.keyReference,
+            )
+            val shareRequest = runCatching { artifact.toShareRequest("Share redacted audit") }
             uiState = uiState.copy(
-                exportState = uiState.exportState.copy(
-                    exportRootPath = exportRepository.exportRootPath,
-                    keyReference = exportRepository.keyReference,
-                    lastArtifactType = artifact.artifactType,
-                    lastArtifactPath = artifact.path,
-                    lastArtifactHash = artifact.payloadHash,
-                    lastCreatedAt = DateTimeFormatter.ISO_INSTANT.format(Instant.ofEpochMilli(artifact.createdAtEpochMs)),
-                    lastRedacted = artifact.redacted,
-                    status = artifact.summary,
-                    error = null,
+                auditExportState = shareRequest.fold(
+                    onSuccess = { exportedState },
+                    onFailure = { error ->
+                        exportedState.copy(
+                            status = "Redacted audit was saved, but the share sheet could not be prepared.",
+                            error = error.message ?: error.javaClass.simpleName,
+                        )
+                    },
                 ),
+                pendingShareRequest = shareRequest.getOrNull(),
+            )
+            Log.i(
+                TAG,
+                "Redacted audit exported type=${artifact.artifactType} sharePrepared=${shareRequest.isSuccess}.",
             )
         }.onFailure { error ->
             uiState = uiState.copy(
-                exportState = uiState.exportState.copy(
+                auditExportState = uiState.auditExportState.copy(
                     exportRootPath = exportRepository.exportRootPath,
                     keyReference = exportRepository.keyReference,
                     status = "Diagnostic bundle export failed.",
@@ -1284,9 +1461,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun consumeShareRequest(requestId: Long) {
+        if (uiState.pendingShareRequest?.id == requestId) {
+            uiState = uiState.copy(pendingShareRequest = null)
+        }
+    }
+
+    fun reportShareLaunchFailure(requestId: Long, message: String) {
+        val request = uiState.pendingShareRequest?.takeIf { it.id == requestId } ?: return
+        uiState = when (request.artifactType) {
+            "profile_backup" -> uiState.copy(
+                backupExportState = uiState.backupExportState.copy(
+                    status = "Encrypted backup was saved, but the share sheet could not open.",
+                    error = message,
+                ),
+                pendingShareRequest = null,
+            )
+            "diagnostic_bundle" -> uiState.copy(
+                auditExportState = uiState.auditExportState.copy(
+                    status = "Redacted audit was saved, but the share sheet could not open.",
+                    error = message,
+                ),
+                pendingShareRequest = null,
+            )
+            else -> uiState.copy(pendingShareRequest = null)
+        }
+    }
+
     override fun onCleared() {
+        mainHandler.removeCallbacks(runtimeStatusRefreshLoop)
+        mainHandler.removeCallbacks(egressProbeTimeoutRunnable)
         runtimeClient.unbind()
         backgroundExecutor.shutdownNow()
+        observationExecutor.shutdownNow()
         super.onCleared()
     }
 
@@ -1298,17 +1505,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             tunnelPlan = TunnelSessionPlanner.plan(compiled),
             routePreview = defaultPreview,
             previewOutcome = evaluatePreview(defaultPreview, bootstrapProfile),
+            routePreviewLastTested = null,
+            routePreviewLastTestedAtEpochMs = null,
+            routePreviewStale = true,
             runtimeSnapshot = VpnRuntimeSnapshot(),
+            egressObservation = EgressObservationState(),
             profileStorage = ProfileStorageState(
                 backend = "Android Keystore AES-GCM",
                 keyReference = profileRepository.keyReference,
                 storagePath = profileRepository.storagePath,
                 status = "Pending encrypted profile load.",
             ),
-            exportState = ExportState(
+            backupExportState = ExportArtifactState(
                 exportRootPath = exportRepository.exportRootPath,
                 keyReference = exportRepository.keyReference,
-                status = "No encrypted export has been generated yet.",
+                status = "No encrypted backup has been generated yet.",
+            ),
+            auditExportState = ExportArtifactState(
+                exportRootPath = exportRepository.exportRootPath,
+                keyReference = exportRepository.keyReference,
+                status = "No redacted audit bundle has been generated yet.",
             ),
             automationState = AutomationState(
                 storagePath = automationRepository.storagePath,
@@ -1714,7 +1930,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             profile = profile,
             compiledConfig = compiled,
             tunnelPlan = TunnelSessionPlanner.plan(compiled),
-            previewOutcome = evaluatePreview(uiState.routePreview, profile),
+            routePreviewStale = true,
             profileStorage = profileStorage,
             importPreview = null,
             showRegionalBypassPrompt = showRegionalBypassPrompt ?: uiState.showRegionalBypassPrompt,
@@ -1731,13 +1947,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             destinationHost = preview.destinationHost.takeIf { it.isNotBlank() },
             destinationIp = preview.destinationIp.takeIf { it.isNotBlank() },
             destinationPort = preview.destinationPort.toIntOrNull(),
-            protocol = NetworkProtocol.TCP,
+            protocol = preview.protocol,
         ),
     )
+
+    private fun ExportArtifactRecord.toExportArtifactState(
+        current: ExportArtifactState,
+        exportRootPath: String,
+        keyReference: String,
+    ): ExportArtifactState = current.copy(
+        exportRootPath = exportRootPath,
+        keyReference = keyReference,
+        lastArtifactType = artifactType,
+        lastArtifactPath = path,
+        lastArtifactHash = payloadHash,
+        lastCreatedAt = DateTimeFormatter.ISO_INSTANT.format(Instant.ofEpochMilli(createdAtEpochMs)),
+        lastRedacted = redacted,
+        status = summary,
+        error = null,
+    )
+
+    private fun ExportArtifactRecord.toShareRequest(chooserTitle: String): ArtifactShareRequest {
+        val uri = FileProvider.getUriForFile(
+            getApplication(),
+            EXPORT_FILE_PROVIDER_AUTHORITY,
+            File(path),
+        )
+        return ArtifactShareRequest(
+            id = nextShareRequestId++,
+            artifactType = artifactType,
+            contentUri = uri.toString(),
+            mimeType = "application/octet-stream",
+            chooserTitle = chooserTitle,
+        )
+    }
 }
 
 private const val TAG: String = "MainViewModel"
 private const val AUTOMATION_TOKEN_CLIPBOARD_CLEAR_DELAY_MS: Long = 10_000L
+private const val RUNTIME_STATUS_REFRESH_INTERVAL_MS: Long = 5_000L
+private const val EGRESS_IP_REFRESH_INTERVAL_MS: Long = 15_000L
+private const val EGRESS_IP_PROBE_TIMEOUT_MS: Long = 12_000L
+private const val EXPORT_FILE_PROVIDER_AUTHORITY: String = "io.acionyx.tunguska.fileprovider"
 
 private fun maskAutomationToken(token: String): String = when {
     token.length <= 10 -> token
@@ -1750,11 +2001,17 @@ data class MainUiState(
     val tunnelPlan: TunnelSessionPlan,
     val routePreview: PreviewInputs,
     val previewOutcome: RoutePreviewOutcome,
+    val routePreviewLastTested: PreviewInputs?,
+    val routePreviewLastTestedAtEpochMs: Long?,
+    val routePreviewStale: Boolean,
     val runtimeSnapshot: VpnRuntimeSnapshot,
+    val egressObservation: EgressObservationState,
     val profileStorage: ProfileStorageState,
-    val exportState: ExportState,
+    val backupExportState: ExportArtifactState,
+    val auditExportState: ExportArtifactState,
     val automationState: AutomationState,
     val subscriptionState: SubscriptionState,
+    val pendingShareRequest: ArtifactShareRequest? = null,
     val importDraft: String = "",
     val importPreview: ImportPreviewState? = null,
     val importStatus: String? = null,
@@ -1766,6 +2023,21 @@ data class MainUiState(
     val regionalBypassError: String? = null,
     val showRegionalBypassPrompt: Boolean = false,
 )
+
+data class EgressObservationState(
+    val phase: EgressObservationPhase = EgressObservationPhase.IDLE,
+    val publicIp: String? = null,
+    val observedAtEpochMs: Long? = null,
+    val observedAt: String? = null,
+    val error: String? = null,
+)
+
+enum class EgressObservationPhase {
+    IDLE,
+    PROBING,
+    OBSERVED,
+    ERROR,
+}
 
 data class ProfileStorageState(
     val backend: String,
@@ -1837,7 +2109,7 @@ data class SubscriptionState(
     val error: String? = null,
 )
 
-data class ExportState(
+data class ExportArtifactState(
     val exportRootPath: String,
     val keyReference: String,
     val status: String,
@@ -1847,6 +2119,14 @@ data class ExportState(
     val lastCreatedAt: String? = null,
     val lastRedacted: Boolean? = null,
     val error: String? = null,
+)
+
+data class ArtifactShareRequest(
+    val id: Long,
+    val artifactType: String,
+    val contentUri: String,
+    val mimeType: String,
+    val chooserTitle: String,
 )
 
 data class AutomationState(
@@ -1866,10 +2146,11 @@ data class AutomationState(
 )
 
 data class PreviewInputs(
-    val packageName: String = "io.acionyx.browser",
-    val destinationHost: String = "login.corp.example",
+    val packageName: String = "",
+    val destinationHost: String = "api.ipify.org",
     val destinationIp: String = "",
     val destinationPort: String = "443",
+    val protocol: NetworkProtocol = NetworkProtocol.TCP,
 )
 
 private fun TunnelSessionPlan.toSummary(): TunnelPlanSummary = TunnelPlanSummary(

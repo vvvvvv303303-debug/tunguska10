@@ -337,6 +337,15 @@ private class XrayTun2SocksEmbeddedEngineSession(
         )
     }
 
+    override fun observeEgressIp(endpoints: List<String>): RuntimeEgressIpObservation {
+        val state = synchronized(lock) { activeState }
+            ?: return RuntimeEgressIpProbe.unavailable("xray+tun2socks runtime is not active.")
+        return RuntimeEgressIpProbe.observeViaSocksBridge(
+            bridge = state.bridge,
+            endpoints = endpoints,
+        )
+    }
+
     private fun startXrayProcess(
         configFile: File,
         workingDir: File,

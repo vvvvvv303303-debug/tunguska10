@@ -24,6 +24,9 @@ class AnubisJointUiHarness {
     private val diagnosticsDirectory = File(appContext.filesDir, DIAGNOSTICS_DIRECTORY_NAME).apply {
         mkdirs()
     }
+    private val diagnosticsMode = DiagnosticsMode.from(
+        InstrumentationRegistry.getArguments().getString(DIAGNOSTICS_MODE_ARGUMENT),
+    )
 
     fun prepareNeutralState() {
         device.executeShellCommand("am force-stop $CHROME_PACKAGE")
@@ -83,6 +86,7 @@ class AnubisJointUiHarness {
     fun configureAnubisTunguskaClient(token: String) {
         openAnubisVpnTab()
         clickTextContaining(ANUBIS_TUNGUSKA_LABEL, scrollAttempts = 4)
+        openAnubisAutomationTokenEditor()
         requireEditText().text = token
         clickLowestTextContaining(
             text = ANUBIS_HOME_TAB_TEXT,
@@ -93,7 +97,11 @@ class AnubisJointUiHarness {
 
     fun addAppToAnubisGroup(groupLabel: String, searchQuery: String, resultText: String = searchQuery) {
         openAnubisHomeTab()
-        clickTextContaining("Добавить в «$groupLabel»", scrollAttempts = 6)
+        if (isAnubisManagedAppVisible(resultText) || isAnubisManagedAppVisible(searchQuery)) {
+            captureStep("anubis_group_${sanitizeLabel(groupLabel)}_configured")
+            return
+        }
+        clickAnubisAddManagedApp(groupLabel)
         val searchField = requireEditText()
         searchField.text = searchQuery
         Thread.sleep(500)
@@ -156,21 +164,33 @@ class AnubisJointUiHarness {
             component = TUNGUSKA_COMPONENT,
             errorMessage = "Tunguska did not reach the foreground.",
         )
-        waitForVisibleText(TUNGUSKA_RUNTIME_SNAPSHOT_TEXT, timeoutMillis = 10_000)
+        waitForAnyVisibleText(
+            texts = listOf(
+                TUNGUSKA_BRAND_TEXT,
+                TUNGUSKA_HOME_TITLE_TEXT,
+                TUNGUSKA_HOME_HEADLINE_READY,
+                TUNGUSKA_HOME_HEADLINE_RUNNING,
+                TUNGUSKA_HOME_HEADLINE_CONNECTING,
+                TUNGUSKA_HOME_HEADLINE_ATTENTION,
+            ),
+            timeoutMillis = 10_000,
+        )
         captureStep("tunguska_launched")
     }
 
     fun waitForTunguskaPhaseVisible(phase: String) {
         launchTunguska()
-        waitForVisibleText("Phase: $phase", timeoutMillis = 15_000)
+        waitForAnyVisibleText(
+            texts = tunguskaPhaseTexts(phase),
+            timeoutMillis = 15_000,
+        )
         captureStep("tunguska_phase_${sanitizeLabel(phase)}")
     }
 
     fun assertSelectedRuntimeStrategy() {
         val expectedStrategy = requestedRuntimeStrategy()
-        launchTunguska()
-        ensureTunguskaDiagnosticsExpanded()
-        waitForVisibleText("Strategy: $expectedStrategy", timeoutMillis = 15_000, scrollAttempts = 6)
+        openTunguskaAdvancedDiagnostics()
+        waitForVisibleText(expectedStrategy, timeoutMillis = 15_000, scrollAttempts = 6)
         captureStep("tunguska_strategy_${sanitizeLabel(expectedStrategy.lowercase())}")
     }
 
@@ -349,6 +369,46 @@ class AnubisJointUiHarness {
         clickObject(candidate)
     }
 
+    private fun openAnubisAutomationTokenEditor() {
+        if (device.hasObject(By.clazz("android.widget.EditText"))) {
+            return
+        }
+        waitForTextObject(
+            text = ANUBIS_AUTOMATION_TOKEN_LABEL,
+            timeoutMillis = 2_000,
+            scrollAttempts = 2,
+        )?.let(::clickObject)
+        if (device.wait(Until.hasObject(By.clazz("android.widget.EditText")), 2_000)) {
+            return
+        }
+        device.findObjects(By.descContains(ANUBIS_EXPAND_TEXT))
+            .filter { candidate -> candidate.visibleBounds.top > device.displayHeight / 3 }
+            .minByOrNull { candidate -> candidate.visibleBounds.top }
+            ?.let(::clickObject)
+    }
+
+    private fun clickAnubisAddManagedApp(groupLabel: String) {
+        waitForTextObject(
+            text = "Добавить в «$groupLabel»",
+            timeoutMillis = 2_000,
+            scrollAttempts = 2,
+        )?.let {
+            clickObject(it)
+            return
+        }
+        val addButton = device.wait(Until.findObject(By.descContains(ANUBIS_ADD_APP_DESCRIPTION)), 5_000)
+            ?: run {
+                captureDiagnostics("anubis_add_app_button_missing")
+                fail("Expected Anubis add-app action to be visible.")
+                error("unreachable")
+            }
+        clickObject(addButton)
+    }
+
+    private fun isAnubisManagedAppVisible(label: String): Boolean {
+        return device.hasObject(By.textContains(label)) || device.hasObject(By.descContains(label))
+    }
+
     private fun waitForVisibleText(text: String, timeoutMillis: Long, scrollAttempts: Int = 0) {
         repeat(scrollAttempts + 1) { attempt ->
             if (device.wait(Until.hasObject(By.textContains(text)), timeoutMillis)) {
@@ -360,6 +420,27 @@ class AnubisJointUiHarness {
         }
         captureDiagnostics("visible_text_timeout")
         fail("Expected visible text containing '$text' within timeout.")
+    }
+
+    private fun waitForAnyVisibleText(
+        texts: List<String>,
+        timeoutMillis: Long,
+        scrollAttempts: Int = 0,
+    ) {
+        repeat(scrollAttempts + 1) { attempt ->
+            val deadline = System.currentTimeMillis() + timeoutMillis
+            while (System.currentTimeMillis() < deadline) {
+                if (texts.any { candidate -> device.hasObject(By.textContains(candidate)) }) {
+                    return
+                }
+                Thread.sleep(250)
+            }
+            if (attempt < scrollAttempts) {
+                swipeUp()
+            }
+        }
+        captureDiagnostics("visible_text_timeout")
+        fail("Expected one of the visible texts within timeout: ${texts.joinToString()}.")
     }
 
     private fun waitForTextObject(text: String, timeoutMillis: Long, scrollAttempts: Int): UiObject2? {
@@ -563,14 +644,64 @@ class AnubisJointUiHarness {
     }
 
     private fun captureStep(label: String) {
-        captureVisualDiagnostics(label)
+        when (diagnosticsMode) {
+            DiagnosticsMode.FULL -> captureVisualDiagnostics(label)
+            DiagnosticsMode.FAST -> writeStepMarker(label)
+        }
     }
 
-    private fun ensureTunguskaDiagnosticsExpanded() {
-        if (device.hasObject(By.textContains("Strategy: "))) {
+    private fun writeStepMarker(label: String) {
+        diagnosticsDirectory.resolve("$label-step.txt").writeText(
+            buildString {
+                appendLine("label=$label")
+                appendLine("timestamp_ms=${System.currentTimeMillis()}")
+                appendLine("package=${device.currentPackageName.orEmpty()}")
+            },
+        )
+    }
+
+    private fun openTunguskaAdvancedDiagnostics() {
+        openTunguskaSecurityScreen()
+        if (device.hasObject(By.textContains(TUNGUSKA_DIAGNOSTICS_TITLE_TEXT))) {
             return
         }
-        clickTextContaining("Show Diagnostics", scrollAttempts = 6)
+        clickTextContaining(TUNGUSKA_OPEN_DIAGNOSTICS_TEXT, scrollAttempts = 8)
+        waitForAnyVisibleText(
+            texts = listOf(
+                TUNGUSKA_DIAGNOSTICS_TITLE_TEXT,
+                TUNGUSKA_RUNTIME_INTERNALS_TEXT,
+            ),
+            timeoutMillis = 10_000,
+            scrollAttempts = 4,
+        )
+    }
+
+    private fun openTunguskaSecurityScreen() {
+        launchTunguska()
+        if (device.hasObject(By.textContains(TUNGUSKA_SECURITY_CARD_TEXT))) {
+            return
+        }
+        clickLowestTextContaining(
+            text = TUNGUSKA_SECURITY_TAB_TEXT,
+            minimumTop = device.displayHeight / 2,
+        )
+        waitForAnyVisibleText(
+            texts = listOf(
+                TUNGUSKA_SECURITY_CARD_TEXT,
+                TUNGUSKA_OPEN_DIAGNOSTICS_TEXT,
+                TUNGUSKA_AUTOMATION_CARD_TEXT,
+            ),
+            timeoutMillis = 10_000,
+        )
+    }
+
+    private fun tunguskaPhaseTexts(phase: String): List<String> = when (phase.trim().uppercase()) {
+        "IDLE" -> listOf(TUNGUSKA_HOME_HEADLINE_READY, TUNGUSKA_CONNECT_BUTTON_TEXT)
+        "STAGED" -> listOf("Profile staged")
+        "START_REQUESTED" -> listOf(TUNGUSKA_HOME_HEADLINE_CONNECTING)
+        "RUNNING" -> listOf(TUNGUSKA_HOME_HEADLINE_RUNNING, TUNGUSKA_STOP_BUTTON_TEXT)
+        "FAIL_CLOSED" -> listOf(TUNGUSKA_HOME_HEADLINE_ATTENTION, "Needs attention")
+        else -> listOf(phase)
     }
 
     private fun containsSensitiveFixture(text: String): Boolean =
@@ -592,6 +723,7 @@ class AnubisJointUiHarness {
         }
         return buildList {
             addIfNotBlank(shareLink)
+            addIfNotBlank(userFromShareLink(shareLink))
             addIfNotBlank(urlDecode(shareLink.substringAfter('#', "")))
             addIfNotBlank(queryParameter(shareLink, "sni"))
             addIfNotBlank(queryParameter(shareLink, "sid"))
@@ -617,6 +749,15 @@ class AnubisJointUiHarness {
         val host = match.groupValues.getOrNull(1).orEmpty()
         val port = match.groupValues.getOrNull(2).orEmpty()
         return if (host.isBlank() || port.isBlank()) null else "$host:$port"
+    }
+
+    private fun userFromShareLink(shareLink: String): String? {
+        val match = Regex("""^[a-z]+://([^@/?#]+)@""", RegexOption.IGNORE_CASE).find(shareLink.trim())
+            ?: return null
+        return match.groupValues.getOrNull(1)
+            ?.substringBefore(':')
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
     }
 
     private fun queryParameter(shareLink: String, name: String): String? {
@@ -696,10 +837,24 @@ class AnubisJointUiHarness {
         private const val VPN_DIALOG_PACKAGE = "com.android.vpndialogs"
         private const val TUNGUSKA_VPN_SERVICE_COMPONENT = ".vpnservice.TunguskaVpnService"
         private const val DIAGNOSTICS_DIRECTORY_NAME = "tunguska-smoke"
+        private const val DIAGNOSTICS_MODE_ARGUMENT = "diagnostics_mode"
         private const val AUTOMATION_TOKEN_SETTING = "tunguska_automation_token"
         private const val PROFILE_SHARE_LINK_SETTING = "tunguska_profile_share_link"
         private const val PROFILE_SHARE_LINK_HEX_SETTING = "tunguska_profile_share_link_hex"
-        private const val TUNGUSKA_RUNTIME_SNAPSHOT_TEXT = "Runtime Snapshot"
+        private const val TUNGUSKA_BRAND_TEXT = "TUNGUSKA"
+        private const val TUNGUSKA_HOME_TITLE_TEXT = "Protection center"
+        private const val TUNGUSKA_HOME_HEADLINE_READY = "Ready to connect"
+        private const val TUNGUSKA_HOME_HEADLINE_RUNNING = "Protected"
+        private const val TUNGUSKA_HOME_HEADLINE_CONNECTING = "Connecting"
+        private const val TUNGUSKA_HOME_HEADLINE_ATTENTION = "Attention required"
+        private const val TUNGUSKA_SECURITY_TAB_TEXT = "Security"
+        private const val TUNGUSKA_SECURITY_CARD_TEXT = "Security posture"
+        private const val TUNGUSKA_AUTOMATION_CARD_TEXT = "Automation"
+        private const val TUNGUSKA_OPEN_DIAGNOSTICS_TEXT = "Advanced diagnostics"
+        private const val TUNGUSKA_DIAGNOSTICS_TITLE_TEXT = "Runtime controls"
+        private const val TUNGUSKA_RUNTIME_INTERNALS_TEXT = "Runtime internals"
+        private const val TUNGUSKA_CONNECT_BUTTON_TEXT = "Connect"
+        private const val TUNGUSKA_STOP_BUTTON_TEXT = "Disconnect"
         private const val RUNTIME_STRATEGY_ARGUMENT = "runtime_strategy"
         private const val RUNTIME_STRATEGY_XRAY = "XRAY_TUN2SOCKS"
         private const val RUNTIME_STRATEGY_SINGBOX = "SINGBOX_EMBEDDED"
@@ -712,6 +867,9 @@ class AnubisJointUiHarness {
         private const val ANUBIS_GRANT_PERMISSION_TEXT = "Разрешить"
         private const val ANUBIS_PROTECTION_ENABLED_TEXT = "ЗАЩИТА АКТИВНА"
         private const val ANUBIS_PROTECTION_DISABLED_TEXT = "ЗАЩИТА ОТКЛЮЧЕНА"
+        private const val ANUBIS_AUTOMATION_TOKEN_LABEL = "Токен автоматизации"
+        private const val ANUBIS_EXPAND_TEXT = "Развернуть"
+        private const val ANUBIS_ADD_APP_DESCRIPTION = "Добавить приложение"
         private const val PROBE_URL_PRIMARY = "https://checkip.amazonaws.com/"
         private const val PROBE_URL_FALLBACK = "https://ifconfig.me/ip"
         private const val PROBE_URL_SECONDARY_FALLBACK = "https://api.ipify.org/"
@@ -726,6 +884,18 @@ class AnubisJointUiHarness {
         private const val REDACTED_TOKEN = "[REDACTED]"
         private val IP_REGEX = Regex("""\b(?:\d{1,3}\.){3}\d{1,3}\b""")
         private val IP_ADDRESS_PATTERN: Pattern = Pattern.compile(IP_REGEX.pattern)
+    }
+}
+
+private enum class DiagnosticsMode {
+    FAST,
+    FULL;
+
+    companion object {
+        fun from(raw: String?): DiagnosticsMode = when (raw?.trim()?.uppercase()) {
+            "FULL" -> FULL
+            else -> FAST
+        }
     }
 }
 

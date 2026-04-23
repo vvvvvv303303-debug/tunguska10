@@ -1,5 +1,5 @@
 param(
-    [string]$Root = (Join-Path (Join-Path $PSScriptRoot "..\..") "build\mvp-detectors")
+    [string]$Root = (Join-Path (Join-Path $PSScriptRoot "..\..") "build\device-validation-detectors")
 )
 
 $ErrorActionPreference = "Stop"
@@ -35,4 +35,4 @@ foreach ($repo in $repos) {
 
 Write-Host ""
 Write-Host "Detector workspace prepared in $Root"
-Write-Host "Next: run tools\\mvp\\new-validation-report.ps1 to generate a report template."
+Write-Host "Next: run tools\device-validation\new-validation-report.ps1 to generate a report template."

@@ -102,6 +102,9 @@ interface EmbeddedEngineSession {
     fun stop(): EmbeddedEngineSessionResult
 
     fun health(): EmbeddedEngineSessionHealthResult
+
+    fun observeEgressIp(endpoints: List<String>): RuntimeEgressIpObservation =
+        RuntimeEgressIpProbe.unavailable("The active runtime does not expose an engine-routed exit IP probe.")
 }
 
 interface EmbeddedEngineHost {
@@ -274,6 +277,12 @@ class ActiveRuntimeSession(
         }
     }
 
+    fun observeEgressIp(endpoints: List<String>): RuntimeEgressIpObservation {
+        return runCatching { engineSession.observeEgressIp(endpoints) }.getOrElse { error ->
+            RuntimeEgressIpProbe.failed(error.message ?: error.javaClass.simpleName)
+        }
+    }
+
     fun stop(): EmbeddedEngineSessionResult {
         val engineStopResult = runCatching { engineSession.stop() }.getOrElse { error ->
             EmbeddedEngineSessionResult(
@@ -304,6 +313,12 @@ object ActiveRuntimeSessionStore {
     fun health(): EmbeddedEngineSessionHealthResult? {
         val session = synchronized(lock) { activeSession }
         return session?.health()
+    }
+
+    fun observeEgressIp(endpoints: List<String> = RuntimeEgressIpProbe.DEFAULT_ENDPOINTS): RuntimeEgressIpObservation {
+        val session = synchronized(lock) { activeSession }
+            ?: return RuntimeEgressIpProbe.unavailable("No active VPN runtime is available for an engine-routed exit IP probe.")
+        return session.observeEgressIp(endpoints)
     }
 
     fun activate(session: ActiveRuntimeSession): EmbeddedEngineSessionResult? {

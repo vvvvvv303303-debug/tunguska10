@@ -1,27 +1,32 @@
 # Anubis Integration
 
-This document describes the current Tunguska automation contract intended for Anubis-style orchestration.
+This document describes Tunguska's optional automation contract for Anubis-style orchestration.
+
+## Product Rule
+
+Automation is a secondary control surface. The normal user path remains the Tunguska UI. Automation must never create a second profile slot, bypass VPN permission requirements, or expose an unauthenticated start/stop API.
 
 ## Security Model
 
-Tunguska does not expose a free-floating broadcast receiver for VPN start or stop.
-
 The supported integration surface is:
 
-- an explicit exported activity
+- explicit exported activity
 - disabled by default
-- gated by a rotatable automation token
-- backed by the same internal Binder/runtime path that the UI uses
+- gated by a rotatable token
+- backed by the same Binder/runtime path used by the UI
+- operating on the current sealed Tunguska profile
+- using the current selected runtime strategy
 
-The runtime control service itself remains non-exported.
+The runtime control service itself is not exported.
 
 ## Tunguska Setup
 
-1. Import and save a real VLESS + REALITY profile in Tunguska.
+1. Import and confirm a real VLESS + REALITY profile in Tunguska.
 2. Start Tunguska manually once and grant Android VPN permission.
-3. Open the `Anubis Integration` card.
-4. Enable automation.
-5. Copy the generated token.
+3. Open Security.
+4. Open Automation.
+5. Enable automation.
+6. Copy or rotate the generated token as needed.
 
 Disabling automation invalidates the current token. Rotating the token invalidates the previous token immediately.
 
@@ -51,11 +56,9 @@ am start -W -n io.acionyx.tunguska/.app.AutomationRelayActivity -a io.acionyx.tu
 am start -W -n io.acionyx.tunguska/.app.AutomationRelayActivity -a io.acionyx.tunguska.action.AUTOMATION_STOP --es automation_token <token> --es caller_hint anubis
 ```
 
-## Behavior
+## Outcomes
 
-Automation requests operate on the currently sealed Tunguska profile.
-
-They can return these outcomes internally and in the encrypted app-private status store:
+Automation requests can produce these outcomes:
 
 - `SUCCESS`
 - `AUTOMATION_DISABLED`
@@ -67,43 +70,48 @@ They can return these outcomes internally and in the encrypted app-private statu
 - `RUNTIME_START_FAILED`
 - `RUNTIME_STOP_FAILED`
 
-If Android VPN permission has not been granted yet, the automation request fails explicitly. Tunguska does not try to obtain first-run VPN permission invisibly on behalf of another app.
+If Android VPN permission has not been granted, the request fails explicitly. Tunguska does not try to obtain first-run VPN permission invisibly on behalf of another app.
 
 ## Diagnostics
 
-Redacted diagnostic bundles include:
+Redacted audit exports include:
 
 - whether automation is enabled
 - whether VPN permission is ready
+- selected runtime strategy
 - last automation status
 - last automation error
 - last caller hint
 
-The automation token is not included in diagnostic exports.
-The automation status record is no longer written to external app storage.
+The automation token is not exported.
 
 ## Validation
 
-The canonical combined Tunguska + Anubis proof lives outside the production app inside the neutral host module documented in [jointtesthost/README.md](../jointtesthost/README.md).
+The canonical combined proof lives in `jointtesthost`, not the production app module:
 
-The runner for that proof is [tools/integration/run-anubis-e2e.ps1](../tools/integration/run-anubis-e2e.ps1).
+- [jointtesthost/README.md](../jointtesthost/README.md)
+- [tools/integration/run-anubis-e2e.ps1](../tools/integration/run-anubis-e2e.ps1)
 
-That runner:
+Run it before committing automation/runtime changes and before cutting a release. Do not run it as the normal inner loop.
 
-- expects a real VLESS share link via CLI or `TUNGUSKA_REAL_SHARE_LINK`
+The runner:
+
 - uses a headed emulator by default
-- resolves the Android SDK from `ANDROID_SDK_ROOT`, `ANDROID_HOME`, or the standard local SDK location
-- resolves the Anubis checkout from `-AnubisRepo` or a sibling `../anubis` repo
+- expects a real VLESS share link through `-ShareLink`, `TUNGUSKA_REAL_SHARE_LINK`, or a pre-staged emulator setting
+- installs Tunguska, `trafficprobe`, `jointtesthost`, and Anubis
+- prepares Tunguska once per runtime strategy
+- runs the joint proof for `XRAY_TUN2SOCKS` and `SINGBOX_EMBEDDED`
+- defaults to fast diagnostics on green runs
 
-The broader local validation flow, supporting scripts, and privacy rules are documented in [docs/e2e-testing.md](./e2e-testing.md).
+Acceptance bar:
 
-The intended acceptance bar for that harness is:
+- Tunguska is frozen while idle under Anubis control.
+- Anubis unfreezes Tunguska before `START`.
+- Tunguska reaches a live VPN runtime.
+- A routed helper app observes a tunneled public IP different from direct baseline.
+- Anubis issues `STOP`.
+- Tunguska returns to idle.
+- Direct public IP is restored.
+- Anubis freezes Tunguska again after shutdown.
 
-- Tunguska package frozen while idle
-- Anubis unfreezes Tunguska before `START`
-- Tunguska reports successful automation start and reaches a live VPN runtime
-- a routed app observes a different public IP through the tunnel
-- Anubis issues `STOP`
-- Tunguska returns to `IDLE`
-- direct public IP is restored
-- Anubis freezes Tunguska again after shutdown
+The broader local validation flow is documented in [docs/e2e-testing.md](./e2e-testing.md).

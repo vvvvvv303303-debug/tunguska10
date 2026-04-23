@@ -29,6 +29,7 @@ class SingboxChromeIpProofTest {
 
         val tunneledIp = harness.openChromeAndReadIp("vpn")
         assertNotEquals("Chrome kept the same public IP after sing-box VPN startup.", directIp, tunneledIp)
+        harness.waitForHomeExitIp(tunneledIp)
 
         harness.launchTunguska()
         harness.stopAndWaitForIdle()

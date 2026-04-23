@@ -11,17 +11,24 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -36,6 +43,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -79,122 +87,150 @@ fun ImportSection(
         )
     }
 
-    Card(
+    Surface(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFFBF9F5)),
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE5DED1)),
+        color = Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(28.dp),
+        border = BorderStroke(1.dp, TunguskaTheme.stroke.copy(alpha = 0.82f)),
     ) {
-        Column(
-            modifier = Modifier.padding(if (compactLayout) 16.dp else 20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+        Box(
+            modifier = Modifier.background(
+                Brush.verticalGradient(
+                    listOf(
+                        TunguskaTheme.surfaceStrong.copy(alpha = 0.94f),
+                        TunguskaTheme.surface.copy(alpha = 0.98f),
+                    ),
+                ),
+            ),
         ) {
-            Text("Secure Import", style = MaterialTheme.typography.titleLarge)
-            Text(
-                text = "Paste a share link or scan a QR code. Accepted now: strict vless:// or ess:// REALITY links and canonical JSON.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFF22332C),
-            )
-            Text(
-                text = "Import status: ${state.importStatus ?: "idle"}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFF22332C),
-            )
-            Text(
-                text = "Import error: ${state.importError ?: "none"}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFF22332C),
-            )
-            OutlinedTextField(
-                value = state.importDraft,
-                onValueChange = onDraftChange,
-                label = { Text("Share link or JSON profile") },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag(UiTags.IMPORT_DRAFT_FIELD),
-                minLines = 4,
-            )
-            ImportActionGroup(compactLayout = compactLayout) {
-                Button(
-                    onClick = onValidateDraft,
-                    modifier = importActionModifier(compactLayout).testTag(UiTags.VALIDATE_IMPORT_BUTTON),
-                ) {
-                    Text("Validate Import")
+            Column(
+                modifier = Modifier.padding(if (compactLayout) 16.dp else 20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Text("Profile intake", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    text = "Paste a share link or scan a QR code. Tunguska validates it before replacing the active sealed profile.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TunguskaTheme.mutedText,
+                )
+                state.importStatus?.takeIf { it.isNotBlank() && it != "idle" }?.let { status ->
+                    Text(
+                        text = status,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TunguskaTheme.accent,
+                    )
                 }
-                Button(
-                    onClick = {
-                        requestCameraPermission.launch(Manifest.permission.CAMERA)
-                    },
-                    modifier = importActionModifier(compactLayout).testTag(UiTags.OPEN_CAMERA_BUTTON),
-                ) {
-                    Text("Open Camera")
+                state.importError?.let { error ->
+                    Text(
+                        text = error,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TunguskaTheme.danger,
+                    )
                 }
-                Button(
-                    onClick = {
-                        pickQrImage.launch(
-                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                        )
-                    },
-                    modifier = importActionModifier(compactLayout).testTag(UiTags.SCAN_IMAGE_BUTTON),
-                ) {
-                    Text("Scan Image")
-                }
-            }
-
-            state.importPreview?.let { preview ->
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF2EEE4)),
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                OutlinedTextField(
+                    value = state.importDraft,
+                    onValueChange = onDraftChange,
+                    label = { Text("Share link or JSON profile") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(UiTags.IMPORT_DRAFT_FIELD),
+                    minLines = 4,
+                )
+                ImportActionGroup(compactLayout = compactLayout) {
+                    Button(
+                        onClick = onValidateDraft,
+                        modifier = importActionModifier(compactLayout).testTag(UiTags.VALIDATE_IMPORT_BUTTON),
+                        shape = RoundedCornerShape(999.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = TunguskaTheme.accent,
+                            contentColor = Color(0xFF061214),
+                        ),
                     ) {
-                        Text("Staged Import", style = MaterialTheme.typography.titleMedium)
-                        Text("Source: ${preview.source.summary()}", style = MaterialTheme.typography.bodyMedium)
-                        Text("Normalized: ${preview.normalizedSourceSummary}", style = MaterialTheme.typography.bodyMedium)
-                        Text("Scheme: ${preview.sourceScheme}", style = MaterialTheme.typography.bodyMedium)
-                        Text("Profile: ${preview.profileName}", style = MaterialTheme.typography.bodyMedium)
-                        Text("Endpoint: ${preview.endpointSummary}", style = MaterialTheme.typography.bodyMedium)
-                        Text("Canonical hash: ${preview.profileHash}", style = MaterialTheme.typography.bodyMedium)
-                        if (preview.warnings.isEmpty()) {
-                            Text("Warnings: none", style = MaterialTheme.typography.bodyMedium)
-                        } else {
+                        Text("Validate")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            requestCameraPermission.launch(Manifest.permission.CAMERA)
+                        },
+                        modifier = importActionModifier(compactLayout).testTag(UiTags.OPEN_CAMERA_BUTTON),
+                        shape = RoundedCornerShape(999.dp),
+                        border = BorderStroke(1.dp, TunguskaTheme.stroke),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TunguskaTheme.bodyText),
+                    ) {
+                        Text("Open camera")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            pickQrImage.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                            )
+                        },
+                        modifier = importActionModifier(compactLayout).testTag(UiTags.SCAN_IMAGE_BUTTON),
+                        shape = RoundedCornerShape(999.dp),
+                        border = BorderStroke(1.dp, TunguskaTheme.stroke),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TunguskaTheme.bodyText),
+                    ) {
+                        Text("Scan image")
+                    }
+                }
+
+                state.importPreview?.let { preview ->
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = TunguskaTheme.surface.copy(alpha = 0.72f),
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                        shape = RoundedCornerShape(22.dp),
+                        border = BorderStroke(1.dp, TunguskaTheme.accent.copy(alpha = 0.24f)),
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(9.dp),
+                        ) {
+                            Text("Review before saving", style = MaterialTheme.typography.titleLarge)
+                            Text("Source: ${preview.source.summary()}", style = MaterialTheme.typography.bodyMedium, color = TunguskaTheme.mutedText)
+                            Text("Profile: ${preview.profileName}", style = MaterialTheme.typography.bodyMedium)
+                            Text("Endpoint: ${preview.endpointSummary}", style = MaterialTheme.typography.bodyMedium)
+                            Text("Canonical hash: ${abbreviateImportHash(preview.profileHash)}", style = MaterialTheme.typography.bodyMedium)
                             preview.warnings.forEach { warning ->
-                                Text("Warning: $warning", style = MaterialTheme.typography.bodyMedium)
+                                Text("Warning: $warning", style = MaterialTheme.typography.bodyMedium, color = TunguskaTheme.warning)
                             }
-                        }
-                        ImportActionGroup(compactLayout = compactLayout) {
-                            Button(
-                                onClick = onConfirmImport,
-                                modifier = importActionModifier(compactLayout).testTag(UiTags.CONFIRM_IMPORT_BUTTON),
-                            ) {
-                                Text("Confirm Import")
-                            }
-                            TextButton(
-                                onClick = onDiscardImport,
-                                modifier = importActionModifier(compactLayout).testTag(UiTags.DISCARD_IMPORT_BUTTON),
-                            ) {
-                                Text("Discard")
+                            ImportActionGroup(compactLayout = compactLayout) {
+                                Button(
+                                    onClick = onConfirmImport,
+                                    modifier = importActionModifier(compactLayout).testTag(UiTags.CONFIRM_IMPORT_BUTTON),
+                                    shape = RoundedCornerShape(999.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = TunguskaTheme.accent,
+                                        contentColor = Color(0xFF061214),
+                                    ),
+                                ) {
+                                    Text("Save profile")
+                                }
+                                TextButton(
+                                    onClick = onDiscardImport,
+                                    modifier = importActionModifier(compactLayout).testTag(UiTags.DISCARD_IMPORT_BUTTON),
+                                ) {
+                                    Text("Discard")
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            if (cameraScannerVisible) {
-                CameraQrScannerCard(
-                    onPayloadDetected = { payload ->
-                        cameraScannerVisible = false
-                        onQrPayloadDetected(payload, ImportCaptureSource.CAMERA_QR)
-                    },
-                    onFailure = { message ->
-                        cameraScannerVisible = false
-                        onImportError(message)
-                    },
-                    onClose = { cameraScannerVisible = false },
-                )
+                if (cameraScannerVisible) {
+                    CameraQrScannerCard(
+                        onPayloadDetected = { payload ->
+                            cameraScannerVisible = false
+                            onQrPayloadDetected(payload, ImportCaptureSource.CAMERA_QR)
+                        },
+                        onFailure = { message ->
+                            cameraScannerVisible = false
+                            onImportError(message)
+                        },
+                        onClose = { cameraScannerVisible = false },
+                    )
+                }
             }
         }
     }
@@ -284,7 +320,7 @@ private fun CameraQrScannerCard(
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFF2EEE4)),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
     ) {
         Column(
@@ -304,6 +340,7 @@ private fun CameraQrScannerCard(
             Text(
                 text = "Point the camera at a single QR code. The scan uses the same validation pipeline as manual imports.",
                 style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             AndroidView(
                 factory = { previewView },
@@ -378,3 +415,6 @@ private fun importActionModifier(compactLayout: Boolean): Modifier =
     } else {
         Modifier
     }
+
+private fun abbreviateImportHash(value: String): String =
+    if (value.length <= 20) value else "${value.take(10)}...${value.takeLast(8)}"

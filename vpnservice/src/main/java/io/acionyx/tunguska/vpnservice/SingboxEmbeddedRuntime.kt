@@ -267,6 +267,14 @@ internal class SingboxEmbeddedEngineSession(
         )
     }
 
+    override fun observeEgressIp(endpoints: List<String>): RuntimeEgressIpObservation {
+        val isStarted = synchronized(lock) { started }
+        if (!isStarted) {
+            return RuntimeEgressIpProbe.unavailable("Embedded sing-box runtime is not active.")
+        }
+        return runtime.observeEgressIp(endpoints)
+    }
+
     private fun rememberFailure(summary: String) {
         synchronized(lock) {
             started = false

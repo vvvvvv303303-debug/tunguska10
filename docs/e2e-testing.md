@@ -1,118 +1,162 @@
 # E2E Testing
 
-This document describes the local emulator validation surface for Tunguska and the canonical joint Tunguska + Anubis proof kept in this repository.
+This document describes Tunguska's local validation strategy.
 
-## Scope
+## Test Tiers
 
-The local E2E surface is split on purpose:
+Use the smallest tier that proves the change.
 
-- `app/src/androidTest`: Tunguska-only instrumentation covering import, connect, stop, automation contract, Chrome IP proof, and split-routing proof
-- `jointtesthost/src/androidTest`: neutral host for cross-app Tunguska + Anubis orchestration
-- `trafficprobe`: helper app used to prove direct-vs-tunneled public IP behavior
-- `tools/emulator`: emulator lifecycle, Chrome bootstrap, UI dumps, and diagnostics collection
-- `tools/integration/run-anubis-e2e.ps1`: full joint Tunguska + Anubis headed-emulator run
+1. Compile and unit tests for domain/compiler/runtime/export changes.
+2. Focused app instrumentation for UI behavior.
+3. Focused headed emulator smoke for Chrome/IP and runtime behavior.
+4. Joint Tunguska + Anubis E2E before committing runtime/automation changes and before releases.
+5. Physical-device validation for stronger runtime/security claims.
 
-The neutral host keeps the cross-app proof out of the production app package and makes the Anubis handoff easier to follow.
+Do not run the joint Anubis proof as a normal inner-loop check.
+
+## Local Modules
+
+- `app/src/androidTest`: Tunguska-only UI and runtime instrumentation.
+- `jointtesthost/src/androidTest`: neutral host for Tunguska + Anubis orchestration.
+- `trafficprobe`: helper app for direct-vs-tunneled public IP checks.
+- `tools/emulator`: emulator startup, Chrome bootstrap, UI dumps, diagnostics.
+- `tools/integration/run-anubis-e2e.ps1`: full joint Anubis proof.
 
 ## Privacy Rules
 
-- Keep real VLESS or REALITY fixtures outside git.
-- Pass live fixtures through CLI arguments or `TUNGUSKA_REAL_SHARE_LINK`.
-- Do not commit raw diagnostics from `logs/`.
-- Share redacted exports or scrubbed logs when reporting issues outside the repo.
-- Tracked tests use synthetic example profile data only.
+- Keep real VLESS/REALITY fixtures outside git.
+- Prefer pre-staged emulator settings or environment variables over command-line secrets.
+- Do not commit raw `logs/` artifacts.
+- Share only redacted exports or scrubbed logs outside the repo.
+- Tracked tests must use synthetic example profile data unless they explicitly read a local live fixture.
 
 ## Environment
 
-The PowerShell helpers now resolve their paths dynamically:
+PowerShell helpers resolve:
 
-- Android SDK: `ANDROID_SDK_ROOT`, `ANDROID_HOME`, or `%LOCALAPPDATA%\Android\Sdk`
-- Java: `JAVA_HOME`, or a standard `%ProgramFiles%\Java\jdk-24` install
-- Anubis repo for the joint flow: `-AnubisRepo`, or a sibling checkout at `../anubis`
+- Android SDK from `ANDROID_SDK_ROOT`, `ANDROID_HOME`, `local.properties`, or standard local SDK location.
+- Java from `JAVA_HOME` or local helper resolution.
+- Anubis checkout from `-AnubisRepo` or sibling `../anubis`.
 
 Required local pieces:
 
-- a configured emulator AVD such as `tunguska-api34`
-- Chrome in the system image or `tools/browser/chrome.apk`
-- Shizuku, which the helper can install on demand
-- a local Anubis checkout when running the joint proof
+- configured AVD such as `tunguska-api34`
+- Chrome in system image or `tools/browser/chrome.apk`
+- Shizuku for Anubis flows
+- local Anubis checkout for joint proof
+- GitHub Packages credentials or `.tmp/maven` for `libbox-android`
 
-## Tunguska-Only Smoke
+## Inner-Loop Commands
 
-Run the local Tunguska smoke suite with a real share link:
+Compile and unit tests:
+
+```powershell
+.\gradlew.bat :vpnservice:testDebugUnitTest :app:testDebugUnitTest :app:compileDebugKotlin :app:compileDebugAndroidTestKotlin --console=plain
+```
+
+Focused routing/security UI proofs:
+
+```powershell
+.\gradlew.bat :app:installDebug :app:installDebugAndroidTest --console=plain
+adb shell am instrument -w -e class io.acionyx.tunguska.app.RegionalBypassProofTest,io.acionyx.tunguska.app.SecurityExportProofTest io.acionyx.tunguska.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+Focused Chrome/IP proofs for both runtime lanes:
+
+```powershell
+adb shell am instrument -w -e class io.acionyx.tunguska.app.ChromeIpProofTest,io.acionyx.tunguska.app.SingboxChromeIpProofTest io.acionyx.tunguska.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+## Runtime Smoke
+
+Use the smoke helper when you need the full headed emulator setup:
 
 ```powershell
 $env:TUNGUSKA_REAL_SHARE_LINK = "<real share link>"
 .\tools\emulator\run-vpn-smoke.ps1
 ```
 
-This flow starts the emulator, ensures Chrome is available, installs Tunguska plus the helper app, runs the app instrumentation, and pulls diagnostics into `logs/`.
+The smoke path installs Tunguska plus helper apps, runs the selected instrumentation, and pulls diagnostics into `logs/`.
 
-The default smoke suite includes `io.acionyx.tunguska.app.RegionalBypassProofTest`, which validates the visible Regional Bypass controls end to end through the app UI.
+## Routing Proof Coverage
 
-## Regional Bypass Local Proof
+The focused routing proof validates:
 
-The local emulator proof covers the user-visible Regional Bypass behavior that Tunguska documents:
+- new imports default to Russia direct
+- `.ru`, `.su`, and `xn--p1ai` policy rows are visible only when the preset is enabled
+- custom direct domains are normalized and removable
+- route test requires pressing `Test route`
+- route test reports VPN/direct/block as user-facing outcomes
+- route result becomes stale after input changes
+- runtime GeoIP hints are shown when the policy depends on runtime datasets
 
-- new imports default to `Russia direct`
-- `.ru`, `.su`, and `.рф` hosts preview as `DIRECT` when Russia direct is enabled
-- non-matching hosts keep the normal routing default while the preview shows the runtime `geoip:ru` hint
-- custom `Always direct domains` preview as `DIRECT`
-- disabling `Russia direct` returns Russian host previews to the normal routing default
+It does not prove live Russian GeoIP dataplane behavior. That belongs to physical-device validation in [docs/device-validation.md](./device-validation.md).
 
-This local proof intentionally validates the feature through the same controls shown on the first screen rather than only through unit tests.
+## Joint Tunguska + Anubis Proof
 
-The authoritative dataplane check for runtime `geoip:ru` classification still remains the physical-device validation step in [docs/mvp-device-validation.md](./mvp-device-validation.md), because the emulator proof exercises the preview and profile state, not a Russian public-IP endpoint.
+The canonical joint proof is:
 
-## Joint Tunguska Plus Anubis Proof
+- `io.acionyx.tunguska.trafficprobe.AnubisJointUiProofTest`
 
-The canonical joint proof is `io.acionyx.tunguska.trafficprobe.AnubisJointUiProofTest` hosted by `jointtesthost`.
-
-Run it with:
+Run it through:
 
 ```powershell
 $env:TUNGUSKA_REAL_SHARE_LINK = "<real share link>"
 .\tools\integration\run-anubis-e2e.ps1 -AnubisRepo ..\anubis
 ```
 
-That runner performs this sequence for both embedded Tunguska engines, `XRAY_TUN2SOCKS` and `SINGBOX_EMBEDDED`:
+The runner performs this sequence for each runtime strategy:
 
-1. boots a headed emulator
-2. ensures Chrome and Shizuku are ready
-3. installs Tunguska, `trafficprobe`, and `jointtesthost`
-4. installs Anubis from the local checkout
-5. prepares the Tunguska automation fixture with the live share link and the selected runtime lane
-6. runs the neutral-host joint instrumentation for that lane
-7. repeats fixture plus joint instrumentation for the other embedded lane
-8. pulls Tunguska and joint-host diagnostics into `logs/`
+1. Start a headed emulator.
+2. Ensure Chrome and Shizuku are ready.
+3. Install Tunguska, `trafficprobe`, and `jointtesthost`.
+4. Install Anubis from the local checkout.
+5. Prepare Tunguska automation fixture with the live profile and selected runtime strategy.
+6. Run the neutral-host joint proof.
+7. Pull diagnostics into `logs/`.
 
-The acceptance bar is:
+Default runtime strategies:
 
-- Tunguska remains frozen while idle under Anubis control
-- Anubis unfreezes Tunguska before automation start
-- Tunguska reaches `RUNNING`
-- the helper app observes a tunneled public IP different from the direct baseline
-- Anubis stops Tunguska cleanly
-- Tunguska returns to `IDLE`
-- the direct public IP is restored
-- Anubis freezes Tunguska again after shutdown
+- `XRAY_TUN2SOCKS`
+- `SINGBOX_EMBEDDED`
 
-## Diagnostics
+Use `-RuntimeStrategies XRAY_TUN2SOCKS` or `-RuntimeStrategies SINGBOX_EMBEDDED` only for targeted investigation. Full pre-release validation should run both.
 
-The helpers write local artifacts under `logs/`, including:
+## Diagnostics Modes
+
+`run-anubis-e2e.ps1` defaults to:
+
+- `-DiagnosticsMode Fast`
+
+Fast mode writes lightweight step markers for successful steps and still captures screenshots, hierarchies, logcat, connectivity, VPN, and service dumps on failures.
+
+Use full mode only when you need visual artifacts for every successful step:
+
+```powershell
+.\tools\integration\run-anubis-e2e.ps1 -AnubisRepo ..\anubis -DiagnosticsMode Full
+```
+
+`tools/emulator/pull-diagnostics.ps1` pulls artifacts through a single tar stream when available, falling back to per-file copy only when needed.
+
+## Acceptance Bar
+
+The joint proof is green when:
+
+- Tunguska remains frozen while idle under Anubis control.
+- Anubis unfreezes Tunguska before automation start.
+- Tunguska reaches `RUNNING`.
+- The helper app observes a tunneled public IP different from direct baseline.
+- Anubis stops Tunguska cleanly.
+- Tunguska returns to idle.
+- Direct public IP is restored.
+- Anubis freezes Tunguska again after shutdown.
+
+## Artifacts
+
+Local artifacts are written under `logs/`, including:
 
 - `tunguska-smoke-*`
 - `anubis-smoke-*`
 - `ui-latest.xml`
 
-These artifacts are intentionally git-ignored because they can contain device-local details, runtime state, and public IP observations from live validation.
-
-## Sharing With The Anubis Author
-
-When sharing this setup outside the repo, send:
-
-- [docs/anubis-integration.md](./anubis-integration.md)
-- [jointtesthost/README.md](../jointtesthost/README.md)
-- [tools/integration/run-anubis-e2e.ps1](../tools/integration/run-anubis-e2e.ps1)
-
-That combination shows the automation contract, the neutral-host structure, and the exact local runner without exposing a committed live fixture.
+These are git-ignored because they can contain device-local details, public IP observations, and runtime state.

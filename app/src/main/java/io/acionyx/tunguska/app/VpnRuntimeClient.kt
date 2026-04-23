@@ -11,6 +11,7 @@ import android.os.Message
 import android.os.Messenger
 import io.acionyx.tunguska.engine.api.CompiledEngineConfig
 import io.acionyx.tunguska.vpnservice.EmbeddedRuntimeStrategyId
+import io.acionyx.tunguska.vpnservice.RuntimeEgressIpObservation
 import io.acionyx.tunguska.vpnservice.TunnelSessionPlan
 import io.acionyx.tunguska.vpnservice.StagedRuntimeRequest
 import io.acionyx.tunguska.vpnservice.VpnRuntimeContract
@@ -21,6 +22,7 @@ class VpnRuntimeClient(
     context: Context,
     private val onConnectionChanged: (Boolean) -> Unit,
     private val onStatus: (VpnRuntimeSnapshot, String?) -> Unit,
+    private val onEgressIpObservation: (RuntimeEgressIpObservation) -> Unit,
 ) {
     private val appContext = context.applicationContext
     private val replyMessenger = Messenger(ReplyHandler())
@@ -74,6 +76,10 @@ class VpnRuntimeClient(
         send(VpnRuntimeContract.simpleMessage(VpnRuntimeContract.MSG_GET_STATUS, replyMessenger))
     }
 
+    fun requestEgressIpObservation() {
+        send(VpnRuntimeContract.simpleMessage(VpnRuntimeContract.MSG_PROBE_EGRESS_IP, replyMessenger))
+    }
+
     fun stageRuntime(
         plan: TunnelSessionPlan,
         compiledConfig: CompiledEngineConfig,
@@ -117,6 +123,10 @@ class VpnRuntimeClient(
                         VpnRuntimeContract.decodeSnapshot(msg.data),
                         VpnRuntimeContract.decodeError(msg.data),
                     )
+                }
+
+                VpnRuntimeContract.MSG_EGRESS_IP -> {
+                    onEgressIpObservation(VpnRuntimeContract.decodeEgressIpObservation(msg.data))
                 }
             }
         }

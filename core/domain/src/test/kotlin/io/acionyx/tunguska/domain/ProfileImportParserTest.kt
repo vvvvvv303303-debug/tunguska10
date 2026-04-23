@@ -20,6 +20,7 @@ class ProfileImportParserTest {
         assertEquals("public+key", imported.profile.outbound.realityPublicKey)
         assertEquals("abcd1234", imported.profile.outbound.realityShortId)
         assertEquals(null, imported.profile.outbound.realitySpiderX)
+        assertEquals("xtls-rprx-vision", imported.profile.outbound.flow)
         assertEquals("vless", imported.source.rawScheme)
         assertEquals("vless", imported.source.normalizedScheme)
         assertTrue(imported.warnings.isEmpty())
@@ -64,6 +65,18 @@ class ProfileImportParserTest {
     }
 
     @Test
+    fun `rejects unsupported vless flow values`() {
+        val error = assertFailsWith<ProfileImportException> {
+            ProfileImportParser.parse(
+                "vless://11111111-1111-1111-1111-111111111111@edge.example.com:443" +
+                    "?security=reality&sni=cdn.example.com&pbk=public-key&sid=abcd1234&flow=unsupported",
+            )
+        }
+
+        assertTrue(error.issues.any { it.field == "import.flow" })
+    }
+
+    @Test
     fun `parses supported reality spider path`() {
         val imported = ProfileImportParser.parse(
             "vless://11111111-1111-1111-1111-111111111111@edge.example.com:443" +
@@ -72,6 +85,17 @@ class ProfileImportParserTest {
 
         assertEquals("/probe", imported.profile.outbound.realitySpiderX)
         assertTrue(imported.warnings.isEmpty())
+    }
+
+    @Test
+    fun `parses vless reality uri when fragment contains raw spaces`() {
+        val imported = ProfileImportParser.parse(
+            "vless://11111111-1111-1111-1111-111111111111@edge.example.com:443" +
+                "?security=reality&sni=cdn.example.com&pbk=public-key&sid=abcd1234&spx=%2F#Alpha Import",
+        )
+
+        assertEquals("Alpha Import", imported.profile.name)
+        assertTrue(imported.warnings.any { it.contains("Normalized raw spaces") })
     }
 
     @Test

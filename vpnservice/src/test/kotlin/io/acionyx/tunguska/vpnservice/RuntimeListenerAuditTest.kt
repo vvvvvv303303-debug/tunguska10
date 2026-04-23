@@ -73,7 +73,7 @@ class RuntimeListenerAuditTest {
     }
 
     @Test
-    fun `audit reports unavailable when proc sources cannot be read`() {
+    fun `audit reports limited topology check when proc sources cannot be read`() {
         val auditor = RuntimeListenerAuditor(
             procNetReader = ProcNetReader { null },
             clock = { 9012L },
@@ -81,8 +81,30 @@ class RuntimeListenerAuditTest {
 
         val result = auditor.auditUid(uid = 1000)
 
-        assertEquals(RuntimeAuditStatus.UNAVAILABLE, result.status)
-        assertTrue(result.summary.contains("unavailable"))
+        assertEquals(RuntimeAuditStatus.LIMITED, result.status)
+        assertTrue(result.summary.contains("declared runtime topology"))
+    }
+
+    @Test
+    fun `limited topology check includes allowed runtime listeners`() {
+        val auditor = RuntimeListenerAuditor(
+            procNetReader = ProcNetReader { null },
+            clock = { 9012L },
+            allowanceProvider = {
+                setOf(
+                    RuntimeAllowedLoopbackListener(
+                        protocol = "tcp",
+                        address = "127.0.0.1",
+                        port = 25_001,
+                    ),
+                )
+            },
+        )
+
+        val result = auditor.auditUid(uid = 1000)
+
+        assertEquals(RuntimeAuditStatus.LIMITED, result.status)
+        assertTrue(result.summary.contains("tcp://127.0.0.1:25001"))
     }
 
     @Test

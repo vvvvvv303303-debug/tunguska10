@@ -1,7 +1,7 @@
 param(
     [string]$DeviceLabel = "unassigned-device",
-    [string]$RuntimeStrategy = "xray+tun2socks",
-    [string]$OutputDir = (Join-Path (Join-Path $PSScriptRoot "..\..") "build\mvp-validation")
+    [string]$RuntimeStrategy = "XRAY_TUN2SOCKS",
+    [string]$OutputDir = (Join-Path (Join-Path $PSScriptRoot "..\..") "build\device-validation")
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,11 +13,13 @@ $fileName = "validation-$timestamp-$DeviceLabel.md"
 $path = Join-Path $OutputDir $fileName
 
 $content = @"
-# Tunguska MVP Validation Report
+# Tunguska Device Validation Report
 
 - Date: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss zzz")
 - Device: $DeviceLabel
 - Runtime strategy: $RuntimeStrategy
+- Commit: pending
+- App version: pending
 
 ## Inputs
 
@@ -26,36 +28,47 @@ $content = @"
 - Profile import by QR image: pending
 - VPN permission granted: pending
 
-## Runtime checks
+## Runtime Checks
 
 - Connect: pending
-- TCP traffic passes: pending
+- Home exit IP shown: pending
+- Routed app public IP changed: pending
 - Disconnect: pending
+- Direct public IP restored: pending
 - Reconnect: pending
-- Split allowlist behavior: pending
-- Split denylist behavior: pending
-- Fail-closed on stop/revoke/error: pending
+- Runtime health remains stable: pending
 
-## Detector checks
+## Routing Checks
+
+- Full tunnel behavior: pending
+- Allowlist behavior: pending
+- Denylist behavior: pending
+- Russia direct enabled: pending
+- Russia direct disabled: pending
+- Custom direct domain: pending
+- Route test outcome matches expected policy: pending
+
+## Detector Checks
 
 - RKNHardering bypass verdict: pending
 - VPN-Detector generic visibility: pending
 - per-app-split-bypass-poc result: pending
-- Termux excluded-app curl result: pending
+- Termux excluded-app public-IP result: pending
 
-## Blocking findings
+## Blocking Findings
 
 - Open unauthenticated localhost proxy: pending
 - Reachable management or debug API: pending
-- Confirmed split-tunnel bypass: pending
+- Confirmed split-routing bypass: pending
 - Underlying-network leak: pending
-- Confirmed excluded-app tunnel egress via VPN network or tun0: pending
+- Raw secret in diagnostic export: pending
+- Automation accepted without valid token: pending
 
-## Notes
+## Evidence
 
-- Attach the redacted diagnostic bundle path here.
-- Record exact detector screenshots or logs here.
-- Record whether the active xray+tun2socks lane matches the expected routing and detector behavior.
+- Redacted audit export path: pending
+- Screenshots/logs path: pending
+- Notes: pending
 "@
 
 Set-Content -Path $path -Value $content -Encoding UTF8

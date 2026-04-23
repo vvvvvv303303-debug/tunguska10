@@ -15,6 +15,7 @@ import android.os.ParcelFileDescriptor
 import android.system.ErrnoException
 import android.system.OsConstants
 import android.util.Log
+import io.acionyx.tunguska.domain.CanonicalJson
 import io.acionyx.tunguska.domain.SplitTunnelMode
 import io.acionyx.tunguska.vpnservice.EmbeddedRuntimeDependencies
 import io.acionyx.tunguska.vpnservice.EmbeddedRuntimeStrategyId
@@ -59,6 +60,13 @@ import kotlin.coroutines.suspendCoroutine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
 
 internal fun interface SingboxRuntimeFactory {
     fun create(
@@ -74,6 +82,8 @@ internal interface SingboxRuntime {
     fun stop()
 
     fun health(): SingboxRuntimeHealth
+
+    fun observeEgressIp(endpoints: List<String>): RuntimeEgressIpObservation
 }
 
 internal data class SingboxRuntimeHealth(
@@ -116,6 +126,9 @@ private class MissingSingboxRuntime(
         healthy = false,
         summary = message,
     )
+
+    override fun observeEgressIp(endpoints: List<String>): RuntimeEgressIpObservation =
+        RuntimeEgressIpProbe.unavailable(message)
 }
 
 private class LibboxSingboxRuntime(
@@ -140,7 +153,11 @@ private class LibboxSingboxRuntime(
             nativeEvent = "Using packaged libbox runtime at ${libboxBinary.absolutePath}.",
         )
         SingboxLibboxEnvironment.ensureSetup(appContext)
-        val configText = runtimeConfigFile.readText()
+        val egressProbeBridge = AuthenticatedLocalBridge.generate()
+        val configText = attachEgressProbeInbound(
+            configText = runtimeConfigFile.readText(),
+            bridge = egressProbeBridge,
+        )
         Libbox.checkConfig(configText)
         val platform = SingboxPlatformInterface(
             context = appContext,
@@ -161,8 +178,23 @@ private class LibboxSingboxRuntime(
                     platform = platform,
                     configText = configText,
                     overrideOptions = overrideOptions,
+                    egressProbeBridge = egressProbeBridge,
                 )
             }
+            RuntimeListenerAllowanceStore.replace(
+                setOf(
+                    RuntimeAllowedLoopbackListener(
+                        protocol = "tcp",
+                        address = "127.0.0.1",
+                        port = egressProbeBridge.port,
+                    ),
+                ),
+            )
+            VpnRuntimeStore.recordRuntimeTelemetry(
+                strategy = EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED,
+                bridgePort = egressProbeBridge.port,
+                nativeEvent = "Started sing-box local exit-IP probe bridge on 127.0.0.1:${egressProbeBridge.port}.",
+            )
         }.getOrElse { error ->
             runCatching { commandServer.closeService() }
             runCatching { commandServer.close() }
@@ -213,6 +245,15 @@ private class LibboxSingboxRuntime(
         }.also {
             runCatching { client.disconnect() }
         }
+    }
+
+    override fun observeEgressIp(endpoints: List<String>): RuntimeEgressIpObservation {
+        val bridge = synchronized(lock) { activeState?.egressProbeBridge }
+            ?: return RuntimeEgressIpProbe.unavailable("Embedded sing-box runtime is not active.")
+        return RuntimeEgressIpProbe.observeViaSocksBridge(
+            bridge = bridge,
+            endpoints = endpoints,
+        )
     }
 
     override fun getSystemProxyStatus(): SystemProxyStatus {
@@ -269,10 +310,41 @@ private class LibboxSingboxRuntime(
         val platform: SingboxPlatformInterface,
         val configText: String,
         val overrideOptions: OverrideOptions,
+        val egressProbeBridge: AuthenticatedLocalBridge,
     )
+
+    private fun attachEgressProbeInbound(
+        configText: String,
+        bridge: AuthenticatedLocalBridge,
+    ): String {
+        val root = CanonicalJson.instance.parseToJsonElement(configText).jsonObject
+        val inbounds = root.getValue("inbounds").jsonArray
+        val patchedInbounds = buildJsonArray {
+            inbounds.forEach(::add)
+            add(egressProbeInbound(bridge))
+        }
+        val patchedRoot = JsonObject(root + ("inbounds" to patchedInbounds))
+        return CanonicalJson.instance.encodeToString(JsonObject.serializer(), patchedRoot)
+    }
+
+    private fun egressProbeInbound(bridge: AuthenticatedLocalBridge): JsonObject = buildJsonObject {
+        put("type", "mixed")
+        put("tag", EGRESS_PROBE_INBOUND_TAG)
+        put("listen", "127.0.0.1")
+        put("listen_port", bridge.port)
+        put("users", buildJsonArray {
+            add(
+                buildJsonObject {
+                    put("username", JsonPrimitive(bridge.user))
+                    put("password", JsonPrimitive(bridge.password))
+                },
+            )
+        })
+    }
 
     private companion object {
         private const val TAG = "SingboxRuntime"
+        private const val EGRESS_PROBE_INBOUND_TAG = "tunguska-egress-probe-in"
     }
 }
 

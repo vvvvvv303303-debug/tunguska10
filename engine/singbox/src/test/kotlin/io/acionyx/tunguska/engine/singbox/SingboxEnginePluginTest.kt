@@ -73,6 +73,28 @@ class SingboxEnginePluginTest {
     }
 
     @Test
+    fun `compiler emits generated custom direct domains`() {
+        val compiled = plugin.compile(
+            sampleProfile().copy(
+                routing = sampleProfile().routing.copy(
+                    regionalBypass = io.acionyx.tunguska.domain.RegionalBypassSettings(
+                        customDirectDomains = listOf("example.com"),
+                    ),
+                ),
+            ),
+        )
+        val json = CanonicalJson.instance.parseToJsonElement(compiled.payload).jsonObject
+        val route = json.getValue("route").jsonObject
+        val customRule = route.getValue("rules").jsonArray.first { rule ->
+            rule.jsonObject["domain_suffix"]?.jsonArray?.any {
+                it.jsonPrimitive.content == "example.com"
+            } == true
+        }.jsonObject
+
+        assertEquals("direct", customRule.getValue("outbound").jsonPrimitive.content)
+    }
+
+    @Test
     fun `compiler emits libbox compatible reality block`() {
         val compiled = plugin.compile(
             sampleProfile().copy(
@@ -91,6 +113,22 @@ class SingboxEnginePluginTest {
         assertEquals("abcd1234", reality.getValue("short_id").jsonPrimitive.content)
         assertFalse(reality.containsKey("spider_x"))
         assertFalse(reality.containsKey("spiderX"))
+    }
+
+    @Test
+    fun `compiler emits vless flow when profile declares vision`() {
+        val compiled = plugin.compile(
+            sampleProfile().copy(
+                outbound = sampleProfile().outbound.copy(
+                    flow = "xtls-rprx-vision",
+                ),
+            ),
+        )
+
+        val json = CanonicalJson.instance.parseToJsonElement(compiled.payload).jsonObject
+        val outbound = json.getValue("outbounds").jsonArray.first().jsonObject
+
+        assertEquals("xtls-rprx-vision", outbound.getValue("flow").jsonPrimitive.content)
     }
 }
 

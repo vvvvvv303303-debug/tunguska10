@@ -141,13 +141,17 @@ class EmbeddedEngineRuntimeTest {
         )
         val startResult = session.start()
         val healthResult = session.health()
+        val egressResult = session.observeEgressIp(listOf("https://ip.example.test"))
         val stopResult = session.stop()
 
         assertEquals(EmbeddedEngineSessionStatus.STARTED, startResult.status)
         assertEquals(EmbeddedEngineSessionHealthStatus.HEALTHY, healthResult.status)
+        assertEquals(RuntimeEgressIpObservationStatus.OBSERVED, egressResult.status)
+        assertEquals("203.0.113.10", egressResult.publicIp)
         assertEquals(EmbeddedEngineSessionStatus.STOPPED, stopResult.status)
         assertEquals(1, runtime.startCalls)
         assertEquals(1, runtime.healthCalls)
+        assertEquals(1, runtime.egressCalls)
         assertEquals(1, runtime.stopCalls)
     }
 
@@ -256,6 +260,7 @@ private class FakeSingboxRuntime(
     var startCalls: Int = 0
     var stopCalls: Int = 0
     var healthCalls: Int = 0
+    var egressCalls: Int = 0
 
     override fun start() {
         startCalls += 1
@@ -273,6 +278,16 @@ private class FakeSingboxRuntime(
         } ?: SingboxRuntimeHealth(
             healthy = true,
             summary = "Embedded sing-box runtime is healthy.",
+        )
+    }
+
+    override fun observeEgressIp(endpoints: List<String>): RuntimeEgressIpObservation {
+        egressCalls += 1
+        return RuntimeEgressIpObservation(
+            status = RuntimeEgressIpObservationStatus.OBSERVED,
+            publicIp = "203.0.113.10",
+            observedAtEpochMs = 1234L,
+            summary = endpoints.firstOrNull(),
         )
     }
 }

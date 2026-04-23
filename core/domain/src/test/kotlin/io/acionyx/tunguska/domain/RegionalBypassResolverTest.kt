@@ -37,6 +37,25 @@ class RegionalBypassResolverTest {
     }
 
     @Test
+    fun `disabled russia preset does not emit russia domain rules`() {
+        val profile = sampleProfile(
+            routing = RoutingPolicy(
+                regionalBypass = RegionalBypassSettings(
+                    customDirectDomains = listOf("example.com"),
+                ),
+            ),
+        )
+
+        val effective = EffectiveRoutingPolicyResolver.resolve(profile)
+
+        assertEquals(
+            listOf("__regional_bypass_custom_direct__"),
+            effective.rules.map { it.id },
+        )
+        assertEquals(listOf("example.com"), effective.rules.single().match.domainSuffix)
+    }
+
+    @Test
     fun `block rules stay ahead of generated regional bypass rules`() {
         val profile = sampleProfile(
             routing = RoutingPolicy(

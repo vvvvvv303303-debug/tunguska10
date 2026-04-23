@@ -2,19 +2,34 @@
 
 `jointtesthost` is the neutral Android instrumentation host for cross-app Tunguska + Anubis validation.
 
-## Why It Exists
+Android instrumentation runs inside one package. Keeping the combined proof here prevents the production app test package from owning Anubis-specific orchestration.
 
-Android instrumentation has to live inside one package. Keeping the combined Tunguska + Anubis proof in this neutral host avoids coupling that cross-app flow to the production app test package.
+## Responsibilities
 
-This keeps the structure clear:
+- Launch and configure Anubis.
+- Drive Tunguska through the exported automation contract.
+- Launch `trafficprobe`.
+- Prove direct-vs-tunneled public IP behavior.
+- Verify Anubis freeze/unfreeze behavior around Tunguska.
+- Validate both `XRAY_TUN2SOCKS` and `SINGBOX_EMBEDDED` through the runner.
 
-- Tunguska-only instrumentation stays in `app/src/androidTest`
-- joint Tunguska + Anubis orchestration stays in `jointtesthost/src/androidTest`
+## Canonical Proof
 
-## Canonical Joint Proof
+The canonical test is:
 
-The canonical proof is `io.acionyx.tunguska.trafficprobe.AnubisJointUiProofTest`.
+- `io.acionyx.tunguska.trafficprobe.AnubisJointUiProofTest`
 
-Run it through [tools/integration/run-anubis-e2e.ps1](../tools/integration/run-anubis-e2e.ps1), not by duplicating the flow inside the production app module.
+Run it through:
 
-The full environment and privacy guidance are documented in [docs/e2e-testing.md](../docs/e2e-testing.md).
+- [tools/integration/run-anubis-e2e.ps1](../tools/integration/run-anubis-e2e.ps1)
+
+Do not duplicate this flow inside `app/src/androidTest`.
+
+## Diagnostics
+
+The harness supports fast and full diagnostics through the runner's `-DiagnosticsMode` option.
+
+- Fast: successful steps write lightweight markers; failures capture full evidence.
+- Full: every successful step also captures screenshot and hierarchy.
+
+The broader environment, privacy, and gating guidance is in [docs/e2e-testing.md](../docs/e2e-testing.md).

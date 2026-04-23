@@ -7,7 +7,8 @@ param(
     [string]$CameraBack = "emulated",
     [int]$MemoryMb = 16384,
     [int]$CpuCores = 12,
-    [int]$VmHeapMb = 512
+    [int]$VmHeapMb = 512,
+    [decimal]$AnimatorDurationScale = 1
 )
 
 $ErrorActionPreference = "Stop"
@@ -157,6 +158,6 @@ if ($boot -ne "1") {
 
 & $adb shell settings put global window_animation_scale 0 | Out-Null
 & $adb shell settings put global transition_animation_scale 0 | Out-Null
-& $adb shell settings put global animator_duration_scale 0 | Out-Null
+& $adb shell settings put global animator_duration_scale $AnimatorDurationScale | Out-Null
 
-Write-Host "Emulator ready (headed=$(!$Headless), hardReset=$HardReset, memoryMb=$MemoryMb, cpuCores=$CpuCores)."
+Write-Host "Emulator ready (headed=$(!$Headless), hardReset=$HardReset, memoryMb=$MemoryMb, cpuCores=$CpuCores, animatorDurationScale=$AnimatorDurationScale)."

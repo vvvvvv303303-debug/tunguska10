@@ -344,4 +344,10 @@ private class ControllerFakeSingboxRuntime : SingboxRuntime {
         healthy = true,
         summary = "Embedded sing-box runtime is healthy.",
     )
+
+    override fun observeEgressIp(endpoints: List<String>): RuntimeEgressIpObservation = RuntimeEgressIpObservation(
+        status = RuntimeEgressIpObservationStatus.OBSERVED,
+        publicIp = "203.0.113.10",
+        observedAtEpochMs = 1234L,
+    )
 }
