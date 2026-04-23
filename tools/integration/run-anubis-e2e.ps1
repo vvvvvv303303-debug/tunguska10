@@ -144,6 +144,17 @@ function Enable-Package {
     & $adb shell cmd package enable $PackageName | Out-Null
 }
 
+function Restore-InteractiveState {
+    try {
+        & $adb shell am force-stop sgnv.anubis.app | Out-Null
+        Enable-Package -PackageName "io.acionyx.tunguska"
+        Enable-Package -PackageName "sgnv.anubis.app"
+        Enable-Package -PackageName "io.acionyx.tunguska.trafficprobe"
+    } catch {
+        Write-Warning "Unable to restore post-E2E package state: $($_.Exception.Message)"
+    }
+}
+
 function Normalize-RuntimeStrategies {
     param(
         [string[]]$Values
@@ -285,6 +296,7 @@ try {
     }
 }
 finally {
+    Restore-InteractiveState
     if ($managingProfileFixture) {
         Clear-ProfileShareLinkFixture
     }

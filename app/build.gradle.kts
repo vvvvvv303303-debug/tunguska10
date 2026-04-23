@@ -12,8 +12,8 @@ android {
         applicationId = "io.acionyx.tunguska"
         minSdk = 26
         targetSdk = 36
-        versionCode = 10
-        versionName = "0.4.0"
+        versionCode = 11
+        versionName = "4.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         testInstrumentationRunnerArguments["clearPackageData"] = "true"

@@ -12,7 +12,6 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -119,6 +118,8 @@ import io.acionyx.tunguska.domain.SplitTunnelMode
 import io.acionyx.tunguska.domain.normalizeDomainForRouting
 import io.acionyx.tunguska.vpnservice.EmbeddedRuntimeStrategyId
 import io.acionyx.tunguska.vpnservice.VpnRuntimePhase
+import kotlin.math.PI
+import kotlin.math.cos
 
 @Composable
 fun TunguskaAppShell(
@@ -493,16 +494,19 @@ private fun ShellBottomBar(
     onNavigate: (TunguskaSection) -> Unit,
 ) {
     Surface(
+        modifier = Modifier
+            .navigationBarsPadding()
+            .padding(horizontal = 12.dp)
+            .padding(top = 4.dp, bottom = 8.dp),
         color = TunguskaTheme.chrome.copy(alpha = 0.98f),
-        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+        shape = RoundedCornerShape(22.dp),
         border = BorderStroke(1.dp, TunguskaTheme.stroke.copy(alpha = 0.72f)),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(horizontal = 20.dp, vertical = 5.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                .padding(horizontal = 14.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             TunguskaSection.entries.forEach { section ->
@@ -566,8 +570,13 @@ private fun NavigationItemButton(
     modifier: Modifier = Modifier,
     vertical: Boolean = false,
 ) {
+    val inactiveAccent = if (vertical) {
+        TunguskaTheme.mutedText
+    } else {
+        TunguskaTheme.bodyText.copy(alpha = 0.68f)
+    }
     val accent by animateColorAsState(
-        targetValue = if (selected) TunguskaTheme.accent else TunguskaTheme.mutedText,
+        targetValue = if (selected) TunguskaTheme.accent else inactiveAccent,
         animationSpec = tween(durationMillis = 260),
         label = "nav-accent",
     )
@@ -576,13 +585,28 @@ private fun NavigationItemButton(
         animationSpec = tween(durationMillis = 260),
         label = "nav-indicator",
     )
-    val arrangement = if (vertical) Arrangement.spacedBy(8.dp) else Arrangement.spacedBy(3.dp)
+    val arrangement = if (vertical) Arrangement.spacedBy(8.dp) else Arrangement.spacedBy(2.dp)
+    val iconFrameSize = if (vertical) {
+        42.dp to 28.dp
+    } else {
+        46.dp to 30.dp
+    }
+    val iconSize = if (vertical) {
+        22.dp
+    } else {
+        when (section) {
+            TunguskaSection.HOME -> 27.dp
+            TunguskaSection.PROFILES -> 28.dp
+            TunguskaSection.ROUTING -> 28.dp
+            TunguskaSection.SECURITY -> 26.dp
+        }
+    }
 
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(16.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = if (vertical) 10.dp else 4.dp, vertical = 5.dp),
+            .padding(horizontal = if (vertical) 10.dp else 4.dp, vertical = if (vertical) 5.dp else 3.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = arrangement,
     ) {
@@ -595,13 +619,13 @@ private fun NavigationItemButton(
         )
         Box(
             modifier = Modifier
-                .size(width = 42.dp, height = 28.dp),
+                .size(width = iconFrameSize.first, height = iconFrameSize.second),
             contentAlignment = Alignment.Center,
         ) {
             AppGlyphIcon(
                 glyph = glyphForSection(section),
                 tint = accent,
-                modifier = Modifier.size(22.dp),
+                modifier = Modifier.size(iconSize),
             )
         }
         Text(
@@ -1017,6 +1041,22 @@ private fun ProtectionHeroCard(
     state: MainUiState,
 ) {
     val phase = state.runtimeSnapshot.phase
+    val heroStageSize = metrics.heroRingSize + if (metrics.compact) 52.dp else 64.dp
+    val backgroundBurstScale = 2f
+    val backgroundPlasmaScale = heroPlasmaBackdropScale(phase)
+    var energyTrigger by remember { mutableStateOf(0) }
+    var previousPhase by remember { mutableStateOf<VpnRuntimePhase?>(null) }
+
+    LaunchedEffect(phase) {
+        val lastPhase = previousPhase
+        if (lastPhase == null) {
+            previousPhase = phase
+        } else if (lastPhase != phase) {
+            previousPhase = phase
+            energyTrigger += 1
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -1027,10 +1067,34 @@ private fun ProtectionHeroCard(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            ProtectionSignal(
-                diameter = metrics.heroRingSize,
-                phase = phase,
-            )
+            Box(
+                modifier = Modifier.size(heroStageSize),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (phase != VpnRuntimePhase.IDLE) {
+                    HeroEnergyBurst(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer(scaleX = backgroundBurstScale, scaleY = backgroundBurstScale),
+                        accentColor = heroVisual(phase).accent,
+                        trigger = energyTrigger,
+                        intensity = heroEnergyBurstIntensity(phase),
+                        durationMillis = heroEnergyBurstDurationMillis(phase),
+                    )
+                    HeroPlasmaBackdrop(
+                        phase = phase,
+                        diameter = metrics.heroRingSize,
+                        modifier = Modifier.graphicsLayer(
+                            scaleX = backgroundPlasmaScale,
+                            scaleY = backgroundPlasmaScale,
+                        ),
+                    )
+                }
+                ProtectionSignal(
+                    diameter = metrics.heroRingSize,
+                    phase = phase,
+                )
+            }
             AnimatedContent(
                 targetState = runtimeHeadline(phase),
                 transitionSpec = {
@@ -1046,6 +1110,101 @@ private fun ProtectionHeroCard(
                     textAlign = TextAlign.Center,
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun HeroPlasmaBackdrop(
+    phase: VpnRuntimePhase,
+    diameter: Dp,
+    modifier: Modifier = Modifier,
+) {
+    val visual = heroVisual(phase)
+    val accent by animateColorAsState(
+        targetValue = visual.accent,
+        animationSpec = tween(durationMillis = 900, easing = FastOutSlowInEasing),
+        label = "hero-plasma-backdrop-accent",
+    )
+    val infiniteTransition = rememberInfiniteTransition(label = "hero-plasma-backdrop")
+    val sweepStart by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(durationMillis = visual.orbitDurationMillis, easing = LinearEasing)),
+        label = "hero-plasma-backdrop-sweep",
+    )
+    val pulseProgress by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            tween(durationMillis = visual.pulseDurationMillis, easing = LinearEasing),
+        ),
+        label = "hero-plasma-backdrop-pulse",
+    )
+    val segmentSweepStart by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            tween(durationMillis = heroSegmentOrbitDurationMillis(phase), easing = LinearEasing),
+        ),
+        label = "hero-plasma-backdrop-segment-sweep",
+    )
+    val plasmaEnergy = if (phase == VpnRuntimePhase.IDLE) {
+        0.34f
+    } else {
+        (0.26f + visual.glowAlpha * 1.08f).coerceIn(0.3f, 1.18f)
+    }
+    val plasmaPulse = if (phase == VpnRuntimePhase.IDLE) {
+        periodicRange(
+            progress = pulseProgress,
+            min = 0.82f,
+            max = 1.08f,
+            phaseOffset = 0.22f,
+        )
+    } else {
+        periodicRange(
+            progress = pulseProgress,
+            min = 0.78f,
+            max = 1.02f,
+            phaseOffset = 0.22f,
+        )
+    }
+    val plasmaInstability = when (phase) {
+        VpnRuntimePhase.IDLE -> 0.02f
+        VpnRuntimePhase.STAGED -> 0.06f
+        VpnRuntimePhase.START_REQUESTED -> 0.18f
+        VpnRuntimePhase.RUNNING -> 0.08f
+        VpnRuntimePhase.FAIL_CLOSED -> 0.14f
+    }
+
+    Canvas(modifier = modifier.size(diameter)) {
+        val canvasSize = this.size
+        val center = Offset(canvasSize.width / 2f, canvasSize.height / 2f)
+        val strokeWidth = canvasSize.minDimension * 0.048f * visual.ringStrokeScale
+        val outerShellStroke = strokeWidth * 1.24f
+        val outerShellRadius = canvasSize.minDimension / 2f - outerShellStroke * 0.72f
+        val orbitRadius = outerShellRadius * 0.72f
+
+        if (phase == VpnRuntimePhase.IDLE) {
+            drawHeroParticleFlow(
+                accentColor = accent,
+                center = center,
+                fieldRadius = orbitRadius * 0.98f,
+                rotationDegrees = sweepStart + segmentSweepStart,
+                energy = plasmaEnergy,
+                pulse = plasmaPulse,
+                instability = plasmaInstability,
+            )
+        } else {
+            drawHeroPlasmaField(
+                accentColor = accent,
+                center = center,
+                fieldRadius = orbitRadius * 1.04f,
+                rotationDegrees = sweepStart * 0.24f + segmentSweepStart * 0.06f,
+                energy = plasmaEnergy,
+                pulse = plasmaPulse,
+                instability = plasmaInstability,
+            )
         }
     }
 }
@@ -1078,32 +1237,46 @@ private fun ProtectionSignal(
         animationSpec = infiniteRepeatable(tween(durationMillis = visual.orbitDurationMillis, easing = LinearEasing)),
         label = "hero-sweep",
     )
-    val haloScale by infiniteTransition.animateFloat(
-        initialValue = 0.96f,
-        targetValue = 1.08f,
-        animationSpec = infiniteRepeatable(
-            tween(durationMillis = visual.breathDurationMillis, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "hero-halo",
-    )
-    val breathScale by infiniteTransition.animateFloat(
-        initialValue = 0.988f,
-        targetValue = visual.outerScale,
-        animationSpec = infiniteRepeatable(
-            tween(durationMillis = visual.breathDurationMillis + 800, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "hero-breath",
-    )
-    val innerPulse by infiniteTransition.animateFloat(
-        initialValue = 0.82f,
+    val breathProgress by infiniteTransition.animateFloat(
+        initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            tween(durationMillis = visual.pulseDurationMillis, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
+            tween(durationMillis = visual.breathDurationMillis + 800, easing = LinearEasing),
         ),
-        label = "hero-inner-pulse",
+        label = "hero-breath-progress",
+    )
+    val pulseProgress by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            tween(durationMillis = visual.pulseDurationMillis, easing = LinearEasing),
+        ),
+        label = "hero-inner-pulse-progress",
+    )
+    val segmentSweepStart by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            tween(durationMillis = heroSegmentOrbitDurationMillis(phase), easing = LinearEasing),
+        ),
+        label = "hero-segment-sweep",
+    )
+    val haloScale = periodicRange(
+        progress = breathProgress,
+        min = 0.96f,
+        max = 1.08f,
+        phaseOffset = 0.12f,
+    )
+    val breathScale = periodicRange(
+        progress = breathProgress,
+        min = 0.988f,
+        max = visual.outerScale,
+    )
+    val innerPulse = periodicRange(
+        progress = pulseProgress,
+        min = 0.82f,
+        max = 1f,
+        phaseOffset = 0.18f,
     )
     Box(
         modifier = Modifier
@@ -1113,42 +1286,125 @@ private fun ProtectionSignal(
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val canvasSize = this.size
-            val strokeWidth = canvasSize.minDimension * 0.05f
-            val radius = canvasSize.minDimension / 2f - strokeWidth
+            val center = Offset(canvasSize.width / 2f, canvasSize.height / 2f)
+            val strokeWidth = canvasSize.minDimension * 0.048f * visual.ringStrokeScale
+            val outerShellStroke = strokeWidth * 1.24f
+            val outerShellRadius = canvasSize.minDimension / 2f - outerShellStroke * 0.72f
+            val orbitRadius = outerShellRadius * 0.72f
+            val innerOrbitRadius = orbitRadius * 0.82f
+            val shellAlpha = if (phase == VpnRuntimePhase.IDLE) 0.42f else 1f
+            val shellEdgeAlpha = if (phase == VpnRuntimePhase.IDLE) 0.08f else 0.16f
+            val outerShellRect = Rect(
+                offset = Offset(center.x - outerShellRadius, center.y - outerShellRadius),
+                size = Size(outerShellRadius * 2f, outerShellRadius * 2f),
+            )
+            val orbitRect = Rect(
+                offset = Offset(center.x - orbitRadius, center.y - orbitRadius),
+                size = Size(orbitRadius * 2f, orbitRadius * 2f),
+            )
+            val innerOrbitRect = Rect(
+                offset = Offset(center.x - innerOrbitRadius, center.y - innerOrbitRadius),
+                size = Size(innerOrbitRadius * 2f, innerOrbitRadius * 2f),
+            )
+            val shellColor = Color(0xFF111A22)
+            val shellEdge = Color(0xFF283640)
+            val segmentStart = -84f
+            val segmentSweep = 48f
+            val segmentDrift = segmentSweepStart
+
+            repeat(6) { segmentIndex ->
+                val startAngle = segmentStart + segmentIndex * 60f
+                drawArc(
+                    color = shellColor.copy(alpha = shellAlpha),
+                    startAngle = startAngle,
+                    sweepAngle = segmentSweep,
+                    useCenter = false,
+                    topLeft = outerShellRect.topLeft,
+                    size = outerShellRect.size,
+                    style = Stroke(width = outerShellStroke, cap = StrokeCap.Round),
+                )
+                drawArc(
+                    color = shellEdge.copy(alpha = shellEdgeAlpha),
+                    startAngle = startAngle + 2f,
+                    sweepAngle = segmentSweep * 0.72f,
+                    useCenter = false,
+                    topLeft = outerShellRect.topLeft,
+                    size = outerShellRect.size,
+                    style = Stroke(width = outerShellStroke * 0.14f, cap = StrokeCap.Round),
+                )
+            }
+
+            heroHighlightedSegments(phase).forEachIndexed { index, segmentIndex ->
+                val shimmer = periodicRange(
+                    progress = breathProgress,
+                    min = 0.76f,
+                    max = 1f,
+                    phaseOffset = 0.1f * index,
+                )
+                val startAngle = segmentStart + segmentIndex * 60f + segmentDrift
+                drawArc(
+                    color = accent.copy(alpha = visual.glowAlpha * 0.22f * shimmer),
+                    startAngle = startAngle,
+                    sweepAngle = segmentSweep,
+                    useCenter = false,
+                    topLeft = outerShellRect.topLeft,
+                    size = outerShellRect.size,
+                    style = Stroke(width = outerShellStroke * 1.34f, cap = StrokeCap.Round),
+                )
+                drawArc(
+                    color = accent.copy(alpha = 0.34f + 0.24f * shimmer),
+                    startAngle = startAngle,
+                    sweepAngle = segmentSweep,
+                    useCenter = false,
+                    topLeft = outerShellRect.topLeft,
+                    size = outerShellRect.size,
+                    style = Stroke(width = outerShellStroke * 0.74f, cap = StrokeCap.Round),
+                )
+            }
+
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(accent.copy(alpha = visual.glowAlpha * innerPulse), Color.Transparent),
-                    radius = radius * 1.45f * haloScale,
+                    center = center,
+                    radius = orbitRadius * 1.42f * haloScale,
                 ),
-                radius = radius * 1.28f * haloScale,
+                radius = orbitRadius * 1.2f * haloScale,
+                center = center,
             )
             drawCircle(
-                color = accent.copy(alpha = 0.055f * innerPulse),
-                radius = radius * 0.72f,
-                style = Stroke(width = strokeWidth * 0.6f),
+                color = accent.copy(alpha = 0.045f * innerPulse),
+                radius = orbitRadius * 0.74f,
+                center = center,
+                style = Stroke(width = strokeWidth * 0.58f),
             )
             drawCircle(
                 color = accent.copy(alpha = visual.baseRingAlpha),
-                radius = radius,
-                style = Stroke(width = strokeWidth),
+                radius = orbitRadius,
+                center = center,
+                style = Stroke(width = strokeWidth * 0.94f),
             )
             drawCircle(
                 color = accent.copy(alpha = visual.baseRingAlpha * 0.55f),
-                radius = radius * 0.58f,
-                style = Stroke(width = strokeWidth * 0.48f),
+                radius = innerOrbitRadius,
+                center = center,
+                style = Stroke(width = strokeWidth * 0.44f),
             )
             drawArc(
                 color = accent.copy(alpha = visual.trailingArcAlpha),
                 startAngle = sweepStart - 18f,
                 sweepAngle = visual.trailingSweep,
                 useCenter = false,
-                style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
+                topLeft = orbitRect.topLeft,
+                size = orbitRect.size,
+                style = Stroke(width = strokeWidth * 0.94f, cap = StrokeCap.Round),
             )
             drawArc(
-                color = accent,
+                color = accent.copy(alpha = 0.9f),
                 startAngle = sweepStart + visual.primaryArcOffset,
                 sweepAngle = visual.primarySweep,
                 useCenter = false,
+                topLeft = orbitRect.topLeft,
+                size = orbitRect.size,
                 style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
             )
             if (visual.secondarySweep > 0f) {
@@ -1157,7 +1413,9 @@ private fun ProtectionSignal(
                     startAngle = sweepStart + 176f,
                     sweepAngle = visual.secondarySweep,
                     useCenter = false,
-                    style = Stroke(width = strokeWidth * 0.72f, cap = StrokeCap.Round),
+                    topLeft = innerOrbitRect.topLeft,
+                    size = innerOrbitRect.size,
+                    style = Stroke(width = strokeWidth * 0.64f, cap = StrokeCap.Round),
                 )
             }
         }
@@ -1169,8 +1427,8 @@ private fun ProtectionSignal(
         ) {
             Box(
                 modifier = Modifier
-                    .size((diameter.value * 0.52f).dp)
-                    .padding(18.dp),
+                    .size((diameter.value * visual.coreDiameterScale).dp)
+                    .padding(2.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 AppGlyphIcon(
@@ -2088,7 +2346,7 @@ private fun UtilityEntryCard(
                 border = BorderStroke(1.dp, accent.copy(alpha = 0.22f)),
             ) {
                 Box(
-                    modifier = Modifier.padding(11.dp),
+                    modifier = Modifier.padding(12.dp),
                     contentAlignment = Alignment.Center,
                 ) {
                     AppGlyphIcon(
@@ -2522,8 +2780,12 @@ private fun AppGlyphIcon(
     modifier: Modifier = Modifier,
 ) {
     Canvas(modifier = modifier) {
-        val strokeWidth = size.minDimension * 0.1f
-        val inset = strokeWidth * 1.35f
+        val strokeWidth = size.minDimension * if (glyph == AppGlyph.SECURITY) 0.088f else 0.1f
+        val inset = if (glyph == AppGlyph.SECURITY) {
+            size.minDimension * 0.045f
+        } else {
+            strokeWidth * 1.35f
+        }
         val left = inset
         val top = inset
         val iconWidth = size.width - inset * 2f
@@ -2592,41 +2854,13 @@ private fun AppGlyphIcon(
 
             AppGlyph.SECURITY -> {
                 val shield = Path().apply {
-                    moveTo(x(0.5f), y(0.12f))
-                    cubicTo(
-                        x(0.72f),
-                        y(0.18f),
-                        x(0.84f),
-                        y(0.24f),
-                        x(0.84f),
-                        y(0.36f),
-                    )
-                    lineTo(x(0.84f), y(0.5f))
-                    cubicTo(
-                        x(0.84f),
-                        y(0.68f),
-                        x(0.72f),
-                        y(0.82f),
-                        x(0.5f),
-                        y(0.9f),
-                    )
-                    cubicTo(
-                        x(0.28f),
-                        y(0.82f),
-                        x(0.16f),
-                        y(0.68f),
-                        x(0.16f),
-                        y(0.5f),
-                    )
-                    lineTo(x(0.16f), y(0.36f))
-                    cubicTo(
-                        x(0.16f),
-                        y(0.24f),
-                        x(0.28f),
-                        y(0.18f),
-                        x(0.5f),
-                        y(0.12f),
-                    )
+                    moveTo(x(0.5f), y(0.1f))
+                    cubicTo(x(0.75f), y(0.18f), x(0.88f), y(0.25f), x(0.88f), y(0.4f))
+                    lineTo(x(0.88f), y(0.55f))
+                    cubicTo(x(0.88f), y(0.75f), x(0.7f), y(0.88f), x(0.5f), y(0.92f))
+                    cubicTo(x(0.3f), y(0.88f), x(0.12f), y(0.75f), x(0.12f), y(0.55f))
+                    lineTo(x(0.12f), y(0.4f))
+                    cubicTo(x(0.12f), y(0.25f), x(0.25f), y(0.18f), x(0.5f), y(0.1f))
                     close()
                 }
                 val check = Path().apply {
@@ -2821,6 +3055,7 @@ private fun InfoHint(text: String) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.Top,
+        modifier = Modifier.fillMaxWidth(),
     ) {
         Surface(
             modifier = Modifier.size(22.dp),
@@ -2873,93 +3108,156 @@ private data class HeroVisual(
     val primarySweep: Float,
     val primaryArcOffset: Float,
     val secondarySweep: Float,
+    val ringStrokeScale: Float,
+    val coreDiameterScale: Float,
 )
 
 private fun heroVisual(phase: VpnRuntimePhase): HeroVisual = when (phase) {
     VpnRuntimePhase.IDLE -> HeroVisual(
-        accent = TunguskaTheme.accentDim.copy(alpha = 0.82f),
-        coreFill = Color(0xFF111E25),
-        orbitDurationMillis = 18000,
-        breathDurationMillis = 6200,
-        pulseDurationMillis = 5400,
+        accent = Color(0xFF4DBBFF),
+        coreFill = Color(0xFF09131E),
+        orbitDurationMillis = 30_000,
+        breathDurationMillis = 8_200,
+        pulseDurationMillis = 7_200,
         outerScale = 1.008f,
-        coreScale = 0.96f,
-        glowAlpha = 0.1f,
-        baseRingAlpha = 0.11f,
-        trailingArcAlpha = 0.12f,
-        trailingSweep = 210f,
-        primarySweep = 36f,
-        primaryArcOffset = 10f,
+        coreScale = 0.9f,
+        glowAlpha = 0.08f,
+        baseRingAlpha = 0.05f,
+        trailingArcAlpha = 0.08f,
+        trailingSweep = 62f,
+        primarySweep = 12f,
+        primaryArcOffset = 188f,
         secondarySweep = 0f,
+        ringStrokeScale = 0.74f,
+        coreDiameterScale = 0.42f,
     )
 
     VpnRuntimePhase.STAGED -> HeroVisual(
-        accent = TunguskaTheme.accentDim,
-        coreFill = Color(0xFF12282B),
-        orbitDurationMillis = 10500,
-        breathDurationMillis = 3900,
-        pulseDurationMillis = 3300,
-        outerScale = 1.024f,
-        coreScale = 1.03f,
-        glowAlpha = 0.26f,
-        baseRingAlpha = 0.22f,
-        trailingArcAlpha = 0.26f,
-        trailingSweep = 286f,
-        primarySweep = 82f,
-        primaryArcOffset = 16f,
-        secondarySweep = 42f,
+        accent = Color(0xFF80E4DC),
+        coreFill = Color(0xFF102B30),
+        orbitDurationMillis = 14_000,
+        breathDurationMillis = 5_200,
+        pulseDurationMillis = 3_800,
+        outerScale = 1.02f,
+        coreScale = 1.01f,
+        glowAlpha = 0.28f,
+        baseRingAlpha = 0.14f,
+        trailingArcAlpha = 0.18f,
+        trailingSweep = 108f,
+        primarySweep = 34f,
+        primaryArcOffset = 22f,
+        secondarySweep = 18f,
+        ringStrokeScale = 0.9f,
+        coreDiameterScale = 0.46f,
     )
 
     VpnRuntimePhase.START_REQUESTED -> HeroVisual(
-        accent = TunguskaTheme.warning,
-        coreFill = Color(0xFF292113),
-        orbitDurationMillis = 4200,
-        breathDurationMillis = 2600,
-        pulseDurationMillis = 1800,
-        outerScale = 1.04f,
-        coreScale = 1.06f,
-        glowAlpha = 0.38f,
-        baseRingAlpha = 0.28f,
-        trailingArcAlpha = 0.36f,
-        trailingSweep = 218f,
-        primarySweep = 72f,
-        primaryArcOffset = 20f,
-        secondarySweep = 82f,
+        accent = Color(0xFFFFC83D),
+        coreFill = Color(0xFF2A210A),
+        orbitDurationMillis = 5_200,
+        breathDurationMillis = 2_300,
+        pulseDurationMillis = 1_700,
+        outerScale = 1.036f,
+        coreScale = 1.07f,
+        glowAlpha = 0.48f,
+        baseRingAlpha = 0.22f,
+        trailingArcAlpha = 0.28f,
+        trailingSweep = 124f,
+        primarySweep = 58f,
+        primaryArcOffset = 8f,
+        secondarySweep = 44f,
+        ringStrokeScale = 1f,
+        coreDiameterScale = 0.52f,
     )
 
     VpnRuntimePhase.RUNNING -> HeroVisual(
-        accent = TunguskaTheme.accent,
-        coreFill = Color(0xFF0F3D39),
-        orbitDurationMillis = 7600,
-        breathDurationMillis = 3200,
-        pulseDurationMillis = 2400,
-        outerScale = 1.045f,
-        coreScale = 1.12f,
-        glowAlpha = 0.5f,
-        baseRingAlpha = 0.34f,
-        trailingArcAlpha = 0.42f,
-        trailingSweep = 330f,
-        primarySweep = 132f,
-        primaryArcOffset = 8f,
-        secondarySweep = 96f,
+        accent = Color(0xFF67FF83),
+        coreFill = Color(0xFF072D1C),
+        orbitDurationMillis = 12_000,
+        breathDurationMillis = 3_800,
+        pulseDurationMillis = 2_800,
+        outerScale = 1.034f,
+        coreScale = 1.14f,
+        glowAlpha = 0.66f,
+        baseRingAlpha = 0.2f,
+        trailingArcAlpha = 0.26f,
+        trailingSweep = 82f,
+        primarySweep = 36f,
+        primaryArcOffset = 12f,
+        secondarySweep = 24f,
+        ringStrokeScale = 0.96f,
+        coreDiameterScale = 0.54f,
     )
 
     VpnRuntimePhase.FAIL_CLOSED -> HeroVisual(
-        accent = TunguskaTheme.danger,
-        coreFill = Color(0xFF2D1716),
-        orbitDurationMillis = 5200,
-        breathDurationMillis = 2000,
-        pulseDurationMillis = 1200,
-        outerScale = 1.036f,
-        coreScale = 1.08f,
-        glowAlpha = 0.42f,
-        baseRingAlpha = 0.3f,
-        trailingArcAlpha = 0.38f,
-        trailingSweep = 132f,
-        primarySweep = 72f,
-        primaryArcOffset = 42f,
-        secondarySweep = 72f,
+        accent = Color(0xFFFF4F5E),
+        coreFill = Color(0xFF300A11),
+        orbitDurationMillis = 7_200,
+        breathDurationMillis = 2_000,
+        pulseDurationMillis = 1_400,
+        outerScale = 1.028f,
+        coreScale = 1.1f,
+        glowAlpha = 0.58f,
+        baseRingAlpha = 0.24f,
+        trailingArcAlpha = 0.32f,
+        trailingSweep = 96f,
+        primarySweep = 46f,
+        primaryArcOffset = 20f,
+        secondarySweep = 32f,
+        ringStrokeScale = 1f,
+        coreDiameterScale = 0.52f,
     )
+}
+
+private fun heroPlasmaBackdropScale(phase: VpnRuntimePhase): Float = when (phase) {
+    VpnRuntimePhase.IDLE -> 1.72f
+    VpnRuntimePhase.STAGED -> 1.9f
+    VpnRuntimePhase.START_REQUESTED -> 2f
+    VpnRuntimePhase.RUNNING -> 2f
+    VpnRuntimePhase.FAIL_CLOSED -> 2f
+}
+
+private fun periodicRange(
+    progress: Float,
+    min: Float,
+    max: Float,
+    phaseOffset: Float = 0f,
+): Float {
+    val normalized = ((progress + phaseOffset) % 1f + 1f) % 1f
+    val wave = ((1.0 - cos(normalized * PI * 2.0)) * 0.5).toFloat()
+    return min + (max - min) * wave
+}
+
+private fun heroHighlightedSegments(phase: VpnRuntimePhase): IntArray = when (phase) {
+    VpnRuntimePhase.IDLE -> intArrayOf(4)
+    VpnRuntimePhase.STAGED -> intArrayOf(0, 4)
+    VpnRuntimePhase.START_REQUESTED -> intArrayOf(0, 1, 3, 5)
+    VpnRuntimePhase.RUNNING -> intArrayOf(0, 2, 3, 5)
+    VpnRuntimePhase.FAIL_CLOSED -> intArrayOf(0, 2, 4, 5)
+}
+
+private fun heroSegmentOrbitDurationMillis(phase: VpnRuntimePhase): Int = when (phase) {
+    VpnRuntimePhase.IDLE -> 34_000
+    VpnRuntimePhase.STAGED -> 24_000
+    VpnRuntimePhase.START_REQUESTED -> 9_600
+    VpnRuntimePhase.RUNNING -> 20_000
+    VpnRuntimePhase.FAIL_CLOSED -> 8_400
+}
+
+private fun heroEnergyBurstIntensity(phase: VpnRuntimePhase): Float = when (phase) {
+    VpnRuntimePhase.IDLE -> 0.34f
+    VpnRuntimePhase.STAGED -> 0.54f
+    VpnRuntimePhase.START_REQUESTED -> 0.92f
+    VpnRuntimePhase.RUNNING -> 1f
+    VpnRuntimePhase.FAIL_CLOSED -> 0.82f
+}
+
+private fun heroEnergyBurstDurationMillis(phase: VpnRuntimePhase): Int = when (phase) {
+    VpnRuntimePhase.IDLE -> 980
+    VpnRuntimePhase.STAGED -> 1_000
+    VpnRuntimePhase.START_REQUESTED -> 1_220
+    VpnRuntimePhase.RUNNING -> 1_120
+    VpnRuntimePhase.FAIL_CLOSED -> 940
 }
 
 private fun heroGlyph(phase: VpnRuntimePhase): AppGlyph = when (phase) {

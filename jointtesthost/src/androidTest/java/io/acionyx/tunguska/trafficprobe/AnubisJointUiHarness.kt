@@ -32,8 +32,16 @@ class AnubisJointUiHarness {
         device.executeShellCommand("am force-stop $CHROME_PACKAGE")
         device.executeShellCommand("am force-stop $ANUBIS_PACKAGE")
         device.executeShellCommand("am force-stop $TUNGUSKA_PACKAGE")
-        device.executeShellCommand("cmd package enable $TUNGUSKA_PACKAGE")
+        enablePackage(TUNGUSKA_PACKAGE)
         waitForVpnTransportState(active = false, timeoutMillis = 15_000, failOnTimeout = true)
+    }
+
+    fun restoreInteractiveState() {
+        device.executeShellCommand("am force-stop $ANUBIS_PACKAGE")
+        device.executeShellCommand("am force-stop $TRAFFIC_PROBE_PACKAGE")
+        enablePackage(TUNGUSKA_PACKAGE)
+        enablePackage(ANUBIS_PACKAGE)
+        enablePackage(TRAFFIC_PROBE_PACKAGE)
     }
 
     fun readAutomationTokenFixture(): String {
@@ -534,6 +542,11 @@ class AnubisJointUiHarness {
         } catch (_: PackageManager.NameNotFoundException) {
             false
         }
+    }
+
+    private fun enablePackage(packageName: String) {
+        device.executeShellCommand("pm enable --user 0 $packageName")
+        device.executeShellCommand("cmd package enable $packageName")
     }
 
     private fun waitForProbeResult(packageName: String, label: String): ProbeResult {
