@@ -1,6 +1,8 @@
 package io.acionyx.tunguska.app
 
 import android.content.Context
+import android.content.SharedPreferences
+import io.acionyx.tunguska.BuildConfig
 import io.acionyx.tunguska.crypto.CipherBox
 import io.acionyx.tunguska.domain.CanonicalJson
 import io.acionyx.tunguska.storage.EncryptedArtifactStore
@@ -16,12 +18,16 @@ private const val AUTOMATION_MASTER_KEY_ALIAS: String = "io.acionyx.tunguska.aut
 private const val AUTOMATION_SETTINGS_RELATIVE_PATH: String = "automation/anubis-integration.json.enc"
 private const val AUTOMATION_ARTIFACT_TYPE: String = "automation_settings"
 private const val AUTOMATION_TOKEN_BYTES: Int = 24
+private const val RUNTIME_STRATEGY_OVERRIDE_PREFS_NAME: String = "automation.runtime_strategy_override"
+private const val RUNTIME_STRATEGY_OVERRIDE_APPLIED_VERSION_CODE_KEY: String = "applied_version_code"
+private const val RUNTIME_STRATEGY_OVERRIDE_TARGET_VERSION_CODE: Int = 13
 
 class AutomationIntegrationRepository(
     path: Path,
     cipherBox: CipherBox,
     private val clock: () -> Long = System::currentTimeMillis,
     private val secureRandom: SecureRandom = SecureRandom(),
+    private val runtimeStrategyOverrideGate: RuntimeStrategyOverrideGate = DisabledRuntimeStrategyOverrideGate,
 ) {
     private val store = EncryptedArtifactStore(
         path = path,
@@ -39,15 +45,31 @@ class AutomationIntegrationRepository(
         cipherBox = cipherBox,
         clock = clock,
         secureRandom = secureRandom,
+        runtimeStrategyOverrideGate = SharedPreferencesRuntimeStrategyOverrideGate(
+            preferences = context.getSharedPreferences(RUNTIME_STRATEGY_OVERRIDE_PREFS_NAME, Context.MODE_PRIVATE),
+            currentVersionCode = BuildConfig.VERSION_CODE,
+        ),
     )
 
     val storagePath: String = store.path.toString()
     val keyReference: String = "android-keystore:$AUTOMATION_MASTER_KEY_ALIAS"
 
     fun load(): AutomationIntegrationSettings {
-        val stored = store.load() ?: return AutomationIntegrationSettings()
-        return CanonicalJson.instance.decodeFromString<StoredAutomationIntegration>(stored.payloadJson)
-            .toSettings()
+        val stored = store.load()
+        val settings = stored?.let {
+            CanonicalJson.instance.decodeFromString<StoredAutomationIntegration>(it.payloadJson)
+                .toSettings()
+        } ?: AutomationIntegrationSettings()
+        return applyRuntimeStrategyReleaseOverride(settings)
+    }
+
+    private fun applyRuntimeStrategyReleaseOverride(settings: AutomationIntegrationSettings): AutomationIntegrationSettings {
+        if (!runtimeStrategyOverrideGate.shouldApply()) {
+            return settings
+        }
+        val overridden = save(settings.copy(runtimeStrategy = EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED))
+        runtimeStrategyOverrideGate.markApplied()
+        return overridden
     }
 
     fun enable(): AutomationIntegrationSettings {
@@ -187,3 +209,37 @@ private fun AutomationIntegrationSettings.toStored(): StoredAutomationIntegratio
     lastAutomationAtEpochMs = lastAutomationAtEpochMs,
     lastCallerHint = lastCallerHint,
 )
+
+interface RuntimeStrategyOverrideGate {
+    fun shouldApply(): Boolean
+
+    fun markApplied()
+}
+
+object DisabledRuntimeStrategyOverrideGate : RuntimeStrategyOverrideGate {
+    override fun shouldApply(): Boolean = false
+
+    override fun markApplied() = Unit
+}
+
+class SharedPreferencesRuntimeStrategyOverrideGate(
+    private val preferences: SharedPreferences,
+    private val currentVersionCode: Int,
+    private val targetVersionCode: Int = RUNTIME_STRATEGY_OVERRIDE_TARGET_VERSION_CODE,
+) : RuntimeStrategyOverrideGate {
+    override fun shouldApply(): Boolean {
+        if (currentVersionCode != targetVersionCode) {
+            return false
+        }
+        return preferences.getInt(RUNTIME_STRATEGY_OVERRIDE_APPLIED_VERSION_CODE_KEY, -1) != currentVersionCode
+    }
+
+    override fun markApplied() {
+        if (currentVersionCode != targetVersionCode) {
+            return
+        }
+        preferences.edit()
+            .putInt(RUNTIME_STRATEGY_OVERRIDE_APPLIED_VERSION_CODE_KEY, currentVersionCode)
+            .apply()
+    }
+}

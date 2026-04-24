@@ -3,6 +3,7 @@ package io.acionyx.tunguska.app
 import io.acionyx.tunguska.crypto.SoftwareAesGcmCipherBox
 import io.acionyx.tunguska.vpnservice.EmbeddedRuntimeStrategyId
 import java.nio.file.Files
+import java.nio.file.Path
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -12,6 +13,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AutomationIntegrationRepositoryTest {
+    @Test
+    fun `load without release override keeps xray default`() {
+        val repository = buildRepository()
+
+        val loaded = repository.load()
+
+        assertEquals(EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS, loaded.runtimeStrategy)
+    }
+
     @Test
     fun `enable generates and persists a token`() {
         val repository = buildRepository()
@@ -87,9 +97,62 @@ class AutomationIntegrationRepositoryTest {
         assertEquals(EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED, loaded.runtimeStrategy)
     }
 
-    private fun buildRepository(): AutomationIntegrationRepository = AutomationIntegrationRepository(
-        path = Files.createTempDirectory("tunguska-automation").resolve("anubis.json.enc"),
-        cipherBox = SoftwareAesGcmCipherBox(SoftwareAesGcmCipherBox.generateKey()),
+    @Test
+    fun `release override migrates existing installs to singbox once`() {
+        val path = Files.createTempDirectory("tunguska-automation").resolve("anubis.json.enc")
+        val cipherBox = SoftwareAesGcmCipherBox(SoftwareAesGcmCipherBox.generateKey())
+        val overrideGate = MutableRuntimeStrategyOverrideGate()
+        buildRepository(path = path, cipherBox = cipherBox)
+            .setRuntimeStrategy(EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS)
+        val repository = buildRepository(
+            path = path,
+            cipherBox = cipherBox,
+            runtimeStrategyOverrideGate = overrideGate,
+        )
+
+        val migrated = repository.load()
+        val loadedAgain = repository.load()
+
+        assertEquals(EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED, migrated.runtimeStrategy)
+        assertEquals(EmbeddedRuntimeStrategyId.SINGBOX_EMBEDDED, loadedAgain.runtimeStrategy)
+        assertEquals(1, overrideGate.appliedCount)
+    }
+
+    @Test
+    fun `release override does not keep forcing singbox after first migration`() {
+        val overrideGate = MutableRuntimeStrategyOverrideGate()
+        val repository = buildRepository(runtimeStrategyOverrideGate = overrideGate)
+
+        repository.load()
+        repository.setRuntimeStrategy(EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS)
+
+        val loaded = repository.load()
+
+        assertEquals(EmbeddedRuntimeStrategyId.XRAY_TUN2SOCKS, loaded.runtimeStrategy)
+        assertEquals(1, overrideGate.appliedCount)
+    }
+
+    private fun buildRepository(
+        path: Path = Files.createTempDirectory("tunguska-automation").resolve("anubis.json.enc"),
+        cipherBox: SoftwareAesGcmCipherBox = SoftwareAesGcmCipherBox(SoftwareAesGcmCipherBox.generateKey()),
+        runtimeStrategyOverrideGate: RuntimeStrategyOverrideGate = DisabledRuntimeStrategyOverrideGate,
+    ): AutomationIntegrationRepository = AutomationIntegrationRepository(
+        path = path,
+        cipherBox = cipherBox,
         clock = { 1234L },
+        runtimeStrategyOverrideGate = runtimeStrategyOverrideGate,
     )
+
+    private class MutableRuntimeStrategyOverrideGate : RuntimeStrategyOverrideGate {
+        private var shouldApply: Boolean = true
+        var appliedCount: Int = 0
+            private set
+
+        override fun shouldApply(): Boolean = shouldApply
+
+        override fun markApplied() {
+            shouldApply = false
+            appliedCount += 1
+        }
+    }
 }
